@@ -7,10 +7,10 @@ const validateToken = require('../middleware/validateToken');
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const PLAN_LIMITS = {
-  free: { monthlyReplies: 10, intents: ['accept','decline','maybe','schedule','ask_info'] },
-  basic: { monthlyReplies: 50, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce'] },
-  pro: { monthlyReplies: Infinity, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce','custom'] },
-  premium: { monthlyReplies: Infinity, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce','custom'] }
+  free: { monthlyReplies: 10, intents: ['accept','decline','maybe','schedule','ask_info'], contacts: 0, reminders: 0 },
+  basic: { monthlyReplies: 50, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce'], contacts: 10, reminders: 5 },
+  pro: { monthlyReplies: 200, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce','custom'], contacts: 50, reminders: 25 },
+  premium: { monthlyReplies: Infinity, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce','custom'], contacts: Infinity, reminders: Infinity }
 };
 
 const INTENT_PROMPTS = {
@@ -80,9 +80,9 @@ router.post('/', validateToken, async (req, res) => {
       upgradeUrl: 'https://harelos.github.io/replymind'
     });
   }
-  if (plan === 'basic' && user.monthly_use_count >= limits.monthlyReplies) {
+  if ((plan === 'basic' || plan === 'pro') && user.monthly_use_count >= limits.monthlyReplies) {
     return res.status(403).json({
-      error: 'Monthly limit reached. Upgrade for unlimited replies.',
+      error: 'Monthly limit reached. Upgrade for more replies.',
       code: 'MONTHLY_LIMIT_REACHED',
       usesRemaining: 0,
       upgradeUrl: 'https://harelos.github.io/replymind'
@@ -139,6 +139,16 @@ Return ONLY a raw JSON object — no markdown, no backticks, no explanation:
       return res.status(500).json({ error: 'Failed to parse AI response. Please try again.', code: 'PARSE_ERROR' });
     }
 
+    // Track token usage for cost analytics
+    const usage = completion.usage || {};
+    await db.logEvent(user.id, 'token_usage', {
+      prompt_tokens: usage.prompt_tokens || 0,
+      completion_tokens: usage.completion_tokens || 0,
+      total_tokens: usage.total_tokens || 0,
+      model: 'gpt-4o-mini',
+      intent, context: detectedContext
+    });
+
     // Increment usage
     await db.incrementUseCount(user.id);
 
@@ -148,7 +158,7 @@ Return ONLY a raw JSON object — no markdown, no backticks, no explanation:
     const updatedUser = await db.getUserById(user.id);
     const usesRemaining = plan === 'free'
       ? Math.max(0, limits.monthlyReplies - (updatedUser?.use_count || 0))
-      : plan === 'basic'
+      : (plan === 'basic' || plan === 'pro')
         ? Math.max(0, limits.monthlyReplies - (updatedUser?.monthly_use_count || 0))
         : null;
 

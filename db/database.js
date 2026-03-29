@@ -193,6 +193,147 @@ const db = {
       FROM users
     `);
     return rows[0];
+  },
+
+  // ─── Admin analytics queries ─────────────────────────────────────────────────
+  async getDAU() {
+    const { rows } = await pool.query(
+      `SELECT COUNT(*) as dau FROM users WHERE last_active_date = CURRENT_DATE`
+    );
+    return parseInt(rows[0].dau);
+  },
+
+  async getWAU() {
+    const { rows } = await pool.query(
+      `SELECT COUNT(*) as wau FROM users WHERE last_active_date >= CURRENT_DATE - INTERVAL '7 days'`
+    );
+    return parseInt(rows[0].wau);
+  },
+
+  async getMAU() {
+    const { rows } = await pool.query(
+      `SELECT COUNT(*) as mau FROM users WHERE last_active_date >= CURRENT_DATE - INTERVAL '30 days'`
+    );
+    return parseInt(rows[0].mau);
+  },
+
+  async getSignupsByDay(days = 30) {
+    const { rows } = await pool.query(
+      `SELECT DATE(created_at) as day, COUNT(*) as signups
+       FROM users WHERE created_at >= NOW() - INTERVAL '${parseInt(days)} days'
+       GROUP BY DATE(created_at) ORDER BY day`
+    );
+    return rows;
+  },
+
+  async getRepliesByDay(days = 30) {
+    const { rows } = await pool.query(
+      `SELECT DATE(created_at) as day, COUNT(*) as replies
+       FROM events WHERE event_name = 'reply_generated'
+       AND created_at >= NOW() - INTERVAL '${parseInt(days)} days'
+       GROUP BY DATE(created_at) ORDER BY day`
+    );
+    return rows;
+  },
+
+  async getIntentDistribution() {
+    const { rows } = await pool.query(
+      `SELECT intent, COUNT(*) as count FROM reply_choices
+       GROUP BY intent ORDER BY count DESC`
+    );
+    return rows;
+  },
+
+  async getContextDistribution() {
+    const { rows } = await pool.query(
+      `SELECT context, COUNT(*) as count FROM reply_choices
+       GROUP BY context ORDER BY count DESC`
+    );
+    return rows;
+  },
+
+  async getFeedbackStats() {
+    const { rows } = await pool.query(
+      `SELECT feedback, COUNT(*) as count FROM reply_choices
+       WHERE feedback IS NOT NULL GROUP BY feedback`
+    );
+    return rows;
+  },
+
+  async getTokenUsage(days = 30) {
+    const { rows } = await pool.query(
+      `SELECT
+         DATE(created_at) as day,
+         SUM((metadata->>'prompt_tokens')::int) as prompt_tokens,
+         SUM((metadata->>'completion_tokens')::int) as completion_tokens,
+         SUM((metadata->>'total_tokens')::int) as total_tokens,
+         COUNT(*) as requests
+       FROM events
+       WHERE event_name = 'token_usage'
+       AND created_at >= NOW() - INTERVAL '${parseInt(days)} days'
+       GROUP BY DATE(created_at) ORDER BY day`
+    );
+    return rows;
+  },
+
+  async getTokenUsageTotal() {
+    const { rows } = await pool.query(
+      `SELECT
+         COALESCE(SUM((metadata->>'total_tokens')::int), 0) as total_tokens,
+         COALESCE(SUM((metadata->>'prompt_tokens')::int), 0) as prompt_tokens,
+         COALESCE(SUM((metadata->>'completion_tokens')::int), 0) as completion_tokens,
+         COUNT(*) as total_requests
+       FROM events WHERE event_name = 'token_usage'`
+    );
+    return rows[0];
+  },
+
+  async getInactiveUsers(daysInactive = 14) {
+    const { rows } = await pool.query(
+      `SELECT id, email, plan, last_active_date, total_replies, created_at
+       FROM users
+       WHERE last_active_date IS NOT NULL
+       AND last_active_date < CURRENT_DATE - INTERVAL '${parseInt(daysInactive)} days'
+       ORDER BY last_active_date DESC`
+    );
+    return rows;
+  },
+
+  async getRecentEvents(limit = 50) {
+    const { rows } = await pool.query(
+      `SELECT e.id, e.user_id, u.email, e.event_name, e.metadata, e.created_at
+       FROM events e LEFT JOIN users u ON e.user_id = u.id
+       ORDER BY e.created_at DESC LIMIT $1`,
+      [parseInt(limit)]
+    );
+    return rows;
+  },
+
+  async updateUserPlan(userId, plan) {
+    const validPlans = ['free', 'basic', 'pro', 'premium'];
+    if (!validPlans.includes(plan)) throw new Error('Invalid plan');
+    const { rows } = await pool.query(
+      `UPDATE users SET plan = $1, activated_at = NOW() WHERE id = $2 RETURNING *`,
+      [plan, userId]
+    );
+    return rows[0] || null;
+  },
+
+  async getIndustryDistribution() {
+    const { rows } = await pool.query(
+      `SELECT COALESCE(NULLIF(industry, ''), 'Not set') as industry, COUNT(*) as count
+       FROM users GROUP BY COALESCE(NULLIF(industry, ''), 'Not set') ORDER BY count DESC`
+    );
+    return rows;
+  },
+
+  async getTopUsersByReplies(limit = 20) {
+    const { rows } = await pool.query(
+      `SELECT id, email, plan, total_replies, streak_days, last_active_date, created_at
+       FROM users ORDER BY total_replies DESC LIMIT $1`,
+      [parseInt(limit)]
+    );
+    return rows;
   }
 };
 

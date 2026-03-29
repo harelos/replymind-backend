@@ -10,9 +10,9 @@ const OpenAI = require('openai');
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const PLAN_LIMITS = {
-  free: { monthlyReplies: 10, intents: ['accept','decline','maybe','schedule','ask_info'], contacts: 3, reminders: 1 },
-  basic: { monthlyReplies: 50, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce'], contacts: 20, reminders: 5 },
-  pro: { monthlyReplies: Infinity, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce','custom'], contacts: Infinity, reminders: Infinity },
+  free: { monthlyReplies: 10, intents: ['accept','decline','maybe','schedule','ask_info'], contacts: 0, reminders: 0 },
+  basic: { monthlyReplies: 50, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce'], contacts: 10, reminders: 5 },
+  pro: { monthlyReplies: 200, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce','custom'], contacts: 50, reminders: 25 },
   premium: { monthlyReplies: Infinity, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce','custom'], contacts: Infinity, reminders: Infinity }
 };
 
@@ -211,17 +211,104 @@ router.get('/me', validateToken, async (req, res) => {
 });
 
 // ─── Admin routes ─────────────────────────────────────────────────────────────
-router.get('/admin/users', async (req, res) => {
+
+function adminAuth(req, res, next) {
   const secret = req.headers['x-admin-secret'];
   if (!secret || secret !== process.env.ADMIN_SECRET)
     return res.status(403).json({ error: 'Forbidden' });
+  next();
+}
 
+router.get('/admin/users', adminAuth, async (req, res) => {
   try {
     const users = await db.getAllUsers();
     const stats = await db.getUserStats();
     res.json({ users, stats });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+router.get('/admin/analytics', adminAuth, async (req, res) => {
+  try {
+    const [stats, dau, wau, mau, intents, contexts, feedback, tokenTotal, industries] = await Promise.all([
+      db.getUserStats(),
+      db.getDAU(),
+      db.getWAU(),
+      db.getMAU(),
+      db.getIntentDistribution(),
+      db.getContextDistribution(),
+      db.getFeedbackStats(),
+      db.getTokenUsageTotal(),
+      db.getIndustryDistribution()
+    ]);
+
+    const basicCount = parseInt(stats.basic_users) || 0;
+    const proCount = parseInt(stats.pro_users) || 0;
+    const premiumCount = parseInt(stats.premium_users) || 0;
+    const mrr = (basicCount * 9) + (proCount * 29) + (premiumCount * 99);
+
+    res.json({ stats, dau, wau, mau, mrr, intents, contexts, feedback, tokenUsage: tokenTotal, industries });
+  } catch (err) {
+    console.error('Analytics error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch analytics' });
+  }
+});
+
+router.get('/admin/charts', adminAuth, async (req, res) => {
+  const days = parseInt(req.query.days) || 30;
+  try {
+    const [signups, replies, tokens] = await Promise.all([
+      db.getSignupsByDay(days),
+      db.getRepliesByDay(days),
+      db.getTokenUsage(days)
+    ]);
+    res.json({ signups, replies, tokens });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch chart data' });
+  }
+});
+
+router.get('/admin/inactive', adminAuth, async (req, res) => {
+  const days = parseInt(req.query.days) || 14;
+  try {
+    const users = await db.getInactiveUsers(days);
+    res.json({ users, count: users.length });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch inactive users' });
+  }
+});
+
+router.get('/admin/top-users', adminAuth, async (req, res) => {
+  try {
+    const users = await db.getTopUsersByReplies(20);
+    res.json({ users });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch top users' });
+  }
+});
+
+router.get('/admin/events', adminAuth, async (req, res) => {
+  try {
+    const events = await db.getRecentEvents(parseInt(req.query.limit) || 50);
+    res.json({ events });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch events' });
+  }
+});
+
+router.put('/admin/user/:id/plan', adminAuth, async (req, res) => {
+  const { plan } = req.body;
+  const userId = parseInt(req.params.id);
+  if (!plan || !['free', 'basic', 'pro', 'premium'].includes(plan))
+    return res.status(400).json({ error: 'Invalid plan' });
+  try {
+    const user = await db.updateUserPlan(userId, plan);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    await db.logEvent(userId, 'plan_changed_by_admin', { plan, previousPlan: req.body.previousPlan || 'unknown' });
+    res.json({ success: true, user });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update plan' });
   }
 });
 

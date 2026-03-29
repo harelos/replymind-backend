@@ -3,12 +3,17 @@ const express = require('express');
 const cors = require('cors');
 const { initDB } = require('./db/database');
 
+const path = require('path');
+
 const app = express();
 
 // Allow all origins in development — tighten this when deploying to Railway
 app.use(cors());
 
 app.use(express.json({ limit: '10kb' }));
+
+// Serve admin panel
+app.use('/admin', express.static(path.join(__dirname, 'admin')));
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
