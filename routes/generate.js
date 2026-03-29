@@ -8,9 +8,9 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const PLAN_LIMITS = {
   free: { monthlyReplies: 10, intents: ['accept','decline','maybe','schedule','ask_info'] },
-  basic: { monthlyReplies: 50, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in'] },
-  pro: { monthlyReplies: Infinity, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','custom'] },
-  premium: { monthlyReplies: Infinity, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','custom'] }
+  basic: { monthlyReplies: 50, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce'] },
+  pro: { monthlyReplies: Infinity, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce','custom'] },
+  premium: { monthlyReplies: Infinity, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce','custom'] }
 };
 
 const INTENT_PROMPTS = {
@@ -21,13 +21,18 @@ const INTENT_PROMPTS = {
   delegate: 'Write a reply that redirects to another person. Use "[Name/Role]" as a placeholder for the person to forward to. Explain why you\'re connecting them.',
   ask_info: 'Write a reply that asks for more information or clarification before making a decision. Be specific about what you need.',
   check_in: 'Write a friendly follow-up/check-in reply. Reference the previous conversation naturally and ask for an update without being pushy.',
-  custom: '' // Will be filled from user's custom prompt
+  negotiate: 'Write a reply that proposes adjusted terms, pricing, or conditions. Be professional and collaborative, not adversarial. Acknowledge the original offer and present a counter.',
+  thank_you: 'Write a warm, genuine thank-you reply. Reference specifically what you are grateful for. Keep it personal and sincere, not generic.',
+  apologize: 'Write a professional apology that takes ownership. Acknowledge the issue, express regret, and offer a concrete next step to make it right.',
+  introduce: 'Write a reply that introduces or connects two parties. Explain briefly why the connection is valuable for both sides. Use "[Name]" as placeholder if needed.',
+  custom: '' // Will be filled from user\'s custom prompt
 };
 
 const INTENT_LABELS = {
   accept: '✅ Accept', decline: '❌ Decline', maybe: '🤔 Maybe',
   schedule: '📅 Schedule', delegate: '➡️ Delegate', ask_info: '❓ More Info',
-  check_in: '🔄 Check In', custom: '✍️ Custom'
+  check_in: '🔄 Check In', negotiate: '💰 Negotiate', thank_you: '🙏 Thank You',
+  apologize: '😔 Apologize', introduce: '🤝 Introduce', custom: '✍️ Custom'
 };
 
 function detectContext(text) {

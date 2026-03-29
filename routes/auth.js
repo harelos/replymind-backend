@@ -10,10 +10,10 @@ const OpenAI = require('openai');
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const PLAN_LIMITS = {
-  free: { monthlyReplies: 10, intents: ['accept','decline','ask_info'], contacts: 3, reminders: 1 },
-  basic: { monthlyReplies: 50, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in'], contacts: 20, reminders: 5 },
-  pro: { monthlyReplies: Infinity, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','custom'], contacts: Infinity, reminders: Infinity },
-  premium: { monthlyReplies: Infinity, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','custom'], contacts: Infinity, reminders: Infinity }
+  free: { monthlyReplies: 10, intents: ['accept','decline','maybe','schedule','ask_info'], contacts: 3, reminders: 1 },
+  basic: { monthlyReplies: 50, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce'], contacts: 20, reminders: 5 },
+  pro: { monthlyReplies: Infinity, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce','custom'], contacts: Infinity, reminders: Infinity },
+  premium: { monthlyReplies: Infinity, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce','custom'], contacts: Infinity, reminders: Infinity }
 };
 
 // POST /api/auth/register
