@@ -35,4 +35,4 @@ npm run dev                # nodemon server.js
 
 ---
 
-Built by [Zvi](https://github.com/harelos).
+Built by [Jacob](https://github.com/harelos).
