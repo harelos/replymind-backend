@@ -54,6 +54,41 @@ async function initDB() {
         time_to_pick_ms INTEGER,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
+
+      -- Paid before the account existed: applied on next register/login for this email.
+      CREATE TABLE IF NOT EXISTS pending_upgrades (
+        email VARCHAR(255) PRIMARY KEY,
+        plan VARCHAR(20) NOT NULL,
+        product VARCHAR(32) NOT NULL DEFAULT 'replymind',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- One account, many products. users.plan stays as ReplyMind's plan for
+      -- backwards compatibility; everything new reads from here so a user can be
+      -- Pro on ReplyMind and free on ConvertIQ without the two fighting.
+      CREATE TABLE IF NOT EXISTS entitlements (
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        product VARCHAR(32) NOT NULL,            -- 'replymind' | 'convertiq'
+        plan    VARCHAR(20) NOT NULL DEFAULT 'free',
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        PRIMARY KEY (user_id, product)
+      );
+
+      -- ConvertIQ audit usage (free tier = 3 audits/month)
+      CREATE TABLE IF NOT EXISTS audits (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        url TEXT,
+        score INTEGER,
+        monthly_leak INTEGER,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    // Older deploys may predate the product column on pending_upgrades.
+    await client.query(`
+      ALTER TABLE pending_upgrades
+        ADD COLUMN IF NOT EXISTS product VARCHAR(32) NOT NULL DEFAULT 'replymind';
     `);
     console.log('Database tables initialized');
   } finally {
@@ -76,6 +111,30 @@ const db = {
   async getUserByActivationCode(code) {
     const { rows } = await pool.query('SELECT * FROM users WHERE activation_code = $1', [code]);
     return rows[0] || null;
+  },
+
+  // ─── Pending upgrades (paid before account existed) ──────────────────────────
+  async setPendingUpgrade(email, plan, product = 'replymind') {
+    await pool.query(
+      `INSERT INTO pending_upgrades (email, plan, product, created_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (email) DO UPDATE
+         SET plan = EXCLUDED.plan, product = EXCLUDED.product, created_at = NOW()`,
+      [email.toLowerCase(), plan, product]
+    );
+  },
+
+  // Returns { plan, product } so the caller grants the entitlement on the right product.
+  async getPendingUpgrade(email) {
+    const { rows } = await pool.query(
+      'SELECT plan, product FROM pending_upgrades WHERE email = $1',
+      [email.toLowerCase()]
+    );
+    return rows[0] ? { plan: rows[0].plan, product: rows[0].product || 'replymind' } : null;
+  },
+
+  async deletePendingUpgrade(email) {
+    await pool.query('DELETE FROM pending_upgrades WHERE email = $1', [email.toLowerCase()]);
   },
 
   async createUser({ email, password_hash, activation_code }) {
@@ -309,8 +368,65 @@ const db = {
     return rows;
   },
 
+  // ─── Entitlements: one account, a plan per product ────────────────────────
+  async getEntitlement(userId, product) {
+    const { rows } = await pool.query(
+      `SELECT plan FROM entitlements WHERE user_id = $1 AND product = $2`,
+      [userId, product]
+    );
+    if (rows[0]) return rows[0].plan;
+    // ReplyMind predates this table, so fall back to the legacy users.plan column.
+    if (product === 'replymind') {
+      const u = await pool.query(`SELECT plan FROM users WHERE id = $1`, [userId]);
+      return u.rows[0]?.plan || 'free';
+    }
+    return 'free';
+  },
+
+  async setEntitlement(userId, product, plan) {
+    await pool.query(
+      `INSERT INTO entitlements (user_id, product, plan, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (user_id, product)
+       DO UPDATE SET plan = EXCLUDED.plan, updated_at = NOW()`,
+      [userId, product, plan]
+    );
+    // Keep the legacy column in step so nothing that still reads it breaks.
+    if (product === 'replymind') {
+      await pool.query(`UPDATE users SET plan = $1 WHERE id = $2`, [plan, userId]);
+    }
+  },
+
+  // ─── ConvertIQ audits ─────────────────────────────────────────────────────
+  async countAuditsThisMonth(userId) {
+    const { rows } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM audits
+       WHERE user_id = $1 AND created_at >= date_trunc('month', NOW())`,
+      [userId]
+    );
+    return rows[0].n;
+  },
+
+  async saveAudit(userId, url, score, monthlyLeak) {
+    const { rows } = await pool.query(
+      `INSERT INTO audits (user_id, url, score, monthly_leak)
+       VALUES ($1, $2, $3, $4) RETURNING id, created_at`,
+      [userId, url, score, monthlyLeak]
+    );
+    return rows[0];
+  },
+
+  async getAudits(userId, limit = 20) {
+    const { rows } = await pool.query(
+      `SELECT id, url, score, monthly_leak, created_at FROM audits
+       WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
+      [userId, parseInt(limit)]
+    );
+    return rows;
+  },
+
   async updateUserPlan(userId, plan) {
-    const validPlans = ['free', 'basic', 'pro', 'premium'];
+    const validPlans = ['free', 'basic', 'pro', 'premium', 'business'];
     if (!validPlans.includes(plan)) throw new Error('Invalid plan');
     const { rows } = await pool.query(
       `UPDATE users SET plan = $1, activated_at = NOW() WHERE id = $2 RETURNING *`,

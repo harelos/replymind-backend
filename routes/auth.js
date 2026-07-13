@@ -9,12 +9,36 @@ const OpenAI = require('openai');
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+const ALL_INTENTS = ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce','custom'];
 const PLAN_LIMITS = {
-  free: { monthlyReplies: 10, intents: ['accept','decline','maybe','schedule','ask_info'], contacts: 0, reminders: 0 },
+  free: { monthlyReplies: 15, intents: ['accept','decline','maybe','schedule','ask_info'], contacts: 0, reminders: 0 },
   basic: { monthlyReplies: 50, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce'], contacts: 10, reminders: 5 },
-  pro: { monthlyReplies: 200, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce','custom'], contacts: 50, reminders: 25 },
-  premium: { monthlyReplies: Infinity, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce','custom'], contacts: Infinity, reminders: Infinity }
+  pro: { monthlyReplies: Infinity, intents: ALL_INTENTS, contacts: 50, reminders: 25 },
+  premium: { monthlyReplies: Infinity, intents: ALL_INTENTS, contacts: Infinity, reminders: Infinity },
+  business: { monthlyReplies: Infinity, intents: ALL_INTENTS, contacts: Infinity, reminders: Infinity }
 };
+
+// Apply any Paddle payment that landed before this account existed.
+// The pending row now carries the product, so a ConvertIQ purchase made before
+// signup grants a ConvertIQ entitlement rather than silently upgrading ReplyMind.
+async function applyPendingUpgrade(user) {
+  try {
+    const pending = await db.getPendingUpgrade(user.email);
+    if (pending && pending.plan) {
+      const product = pending.product || 'replymind';
+      await db.setEntitlement(user.id, product, pending.plan);
+      if (product === 'replymind') {
+        await db.updateUser(user.id, { activated_at: new Date().toISOString() });
+        user.plan = pending.plan;
+      }
+      await db.deletePendingUpgrade(user.email);
+      await db.logEvent(user.id, 'plan_activated', {
+        method: 'pending_upgrade', product, plan: pending.plan,
+      });
+    }
+  } catch (e) { /* non-critical: never block auth on this */ }
+  return user;
+}
 
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
@@ -38,6 +62,9 @@ router.post('/register', async (req, res) => {
     if (industry) {
       await db.updateUser(user.id, { industry: industry.slice(0, 100) });
     }
+
+    // If they paid before creating the account, upgrade them now.
+    await applyPendingUpgrade(user);
 
     const token = jwt.sign({ userId: user.id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '30d' });
     await db.logEvent(user.id, 'account_created', { email: user.email, industry: industry || '' });
@@ -69,6 +96,9 @@ router.post('/login', async (req, res) => {
     const match = await bcrypt.compare(password, user.password_hash);
     if (!match) return res.status(401).json({ error: 'Invalid email or password' });
 
+    // Pick up any Paddle payment made against this email while logged out.
+    await applyPendingUpgrade(user);
+
     const token = jwt.sign({ userId: user.id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '30d' });
 
     res.json({
@@ -97,7 +127,7 @@ router.post('/activate', validateToken, async (req, res) => {
     if (user.activation_code !== activationCode.trim())
       return res.status(404).json({ error: 'Invalid activation code' });
 
-    const targetPlan = ['basic', 'pro', 'premium'].includes(plan) ? plan : 'pro';
+    const targetPlan = ['basic', 'pro', 'premium', 'business'].includes(plan) ? plan : 'pro';
     if (user.plan === targetPlan) return res.json({ message: 'Already activated', plan: targetPlan });
 
     await db.updateUser(user.id, { plan: targetPlan, activated_at: new Date().toISOString() });
@@ -300,7 +330,7 @@ router.get('/admin/events', adminAuth, async (req, res) => {
 router.put('/admin/user/:id/plan', adminAuth, async (req, res) => {
   const { plan } = req.body;
   const userId = parseInt(req.params.id);
-  if (!plan || !['free', 'basic', 'pro', 'premium'].includes(plan))
+  if (!plan || !['free', 'basic', 'pro', 'premium', 'business'].includes(plan))
     return res.status(400).json({ error: 'Invalid plan' });
   try {
     const user = await db.updateUserPlan(userId, plan);

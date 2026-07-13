@@ -10,6 +10,10 @@ const app = express();
 // Allow all origins in development — tighten this when deploying to Railway
 app.use(cors());
 
+// Paddle webhook needs the RAW body for signature verification, so parse it as a
+// Buffer for that path only, BEFORE the JSON parser consumes the stream.
+app.use('/api/payments/webhook', express.raw({ type: '*/*', limit: '256kb' }));
+
 app.use(express.json({ limit: '10kb' }));
 
 // Serve admin panel
@@ -18,6 +22,8 @@ app.use('/admin', express.static(path.join(__dirname, 'admin')));
 // Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/generate', require('./routes/generate'));
+app.use('/api/payments', require('./routes/payments'));
+app.use('/api/convertiq', require('./routes/convertiq'));
 
 // Health check
 app.get('/health', (req, res) => {

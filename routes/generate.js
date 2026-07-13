@@ -6,11 +6,17 @@ const validateToken = require('../middleware/validateToken');
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+const ALL_INTENTS = ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce','custom'];
+
+// Pro is sold as UNLIMITED replies and unlimited contact memory. It was capped at 200
+// replies / 50 contacts here, which would have hit paying customers with a wall we
+// told them did not exist. Free is gated on MEMORY (1 contact), not on reply count.
 const PLAN_LIMITS = {
-  free: { monthlyReplies: 10, intents: ['accept','decline','maybe','schedule','ask_info'], contacts: 0, reminders: 0 },
-  basic: { monthlyReplies: 50, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce'], contacts: 10, reminders: 5 },
-  pro: { monthlyReplies: 200, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce','custom'], contacts: 50, reminders: 25 },
-  premium: { monthlyReplies: Infinity, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce','custom'], contacts: Infinity, reminders: Infinity }
+  free:     { monthlyReplies: 15,       intents: ['accept','decline','maybe','schedule','ask_info'], contacts: 1,        reminders: 1 },
+  basic:    { monthlyReplies: 50,       intents: ALL_INTENTS.filter(i => i !== 'custom'),            contacts: 20,       reminders: 5 },
+  pro:      { monthlyReplies: Infinity, intents: ALL_INTENTS,                                        contacts: Infinity, reminders: Infinity },
+  business: { monthlyReplies: Infinity, intents: ALL_INTENTS,                                        contacts: Infinity, reminders: Infinity },
+  premium:  { monthlyReplies: Infinity, intents: ALL_INTENTS,                                        contacts: Infinity, reminders: Infinity }
 };
 
 const INTENT_PROMPTS = {
