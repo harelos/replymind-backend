@@ -248,7 +248,8 @@ const db = {
         COUNT(*) FILTER (WHERE plan = 'basic') as basic_users,
         COUNT(*) FILTER (WHERE plan = 'pro') as pro_users,
         COUNT(*) FILTER (WHERE plan = 'premium') as premium_users,
-        SUM(total_replies) as total_replies_generated
+        COUNT(*) FILTER (WHERE plan = 'business') as business_users,
+        COALESCE(SUM(total_replies), 0) as total_replies
       FROM users
     `);
     return rows[0];
@@ -278,7 +279,7 @@ const db = {
 
   async getSignupsByDay(days = 30) {
     const { rows } = await pool.query(
-      `SELECT DATE(created_at) as day, COUNT(*) as signups
+      `SELECT DATE(created_at) as day, COUNT(*) as count
        FROM users WHERE created_at >= NOW() - INTERVAL '${parseInt(days)} days'
        GROUP BY DATE(created_at) ORDER BY day`
     );
@@ -287,7 +288,7 @@ const db = {
 
   async getRepliesByDay(days = 30) {
     const { rows } = await pool.query(
-      `SELECT DATE(created_at) as day, COUNT(*) as replies
+      `SELECT DATE(created_at) as day, COUNT(*) as count
        FROM events WHERE event_name = 'reply_generated'
        AND created_at >= NOW() - INTERVAL '${parseInt(days)} days'
        GROUP BY DATE(created_at) ORDER BY day`
@@ -360,10 +361,29 @@ const db = {
 
   async getRecentEvents(limit = 50) {
     const { rows } = await pool.query(
-      `SELECT e.id, e.user_id, u.email, e.event_name, e.metadata, e.created_at
-       FROM events e LEFT JOIN users u ON e.user_id = u.id
+      `SELECT e.id, e.event_name, e.metadata - 'email' AS metadata, e.created_at,
+              CASE WHEN e.user_id IS NULL THEN 'system' ELSE 'signed-in user' END AS actor
+       FROM events e
        ORDER BY e.created_at DESC LIMIT $1`,
-      [parseInt(limit)]
+      [Math.max(1, Math.min(parseInt(limit) || 50, 200))]
+    );
+    return rows;
+  },
+
+  async getFunnelStats(days = 30) {
+    const eventNames = [
+      'account_created', 'onboarding_voice_completed', 'onboarding_completed', 'reply_generated',
+      'reply_inserted', 'contact_remembered', 'memory_limit_shown',
+      'checkout_clicked', 'plan_activated'
+    ];
+    const { rows } = await pool.query(
+      `SELECT event_name, COUNT(*)::int AS events,
+              COUNT(DISTINCT user_id)::int AS users
+       FROM events
+       WHERE created_at >= NOW() - ($1::int * INTERVAL '1 day')
+         AND event_name = ANY($2::text[])
+       GROUP BY event_name`,
+      [Math.max(1, Math.min(parseInt(days) || 30, 365)), eventNames]
     );
     return rows;
   },
@@ -445,7 +465,7 @@ const db = {
 
   async getTopUsersByReplies(limit = 20) {
     const { rows } = await pool.query(
-      `SELECT id, email, plan, total_replies, streak_days, last_active_date, created_at
+      `SELECT id, email, plan, total_replies, streak_days, industry, last_active_date, created_at
        FROM users ORDER BY total_replies DESC LIMIT $1`,
       [parseInt(limit)]
     );

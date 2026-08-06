@@ -15,8 +15,6 @@ const router = express.Router();
 const crypto = require('crypto');
 const db = require('../db/database');
 
-const VALID_PLANS = ['free', 'basic', 'pro', 'premium', 'business', 'operator', 'studio'];
-
 // One account can hold a plan per product, so a price id must resolve to BOTH the
 // product it belongs to and the plan it grants. Without the product, a ConvertIQ
 // purchase would silently upgrade the buyer's ReplyMind plan instead.
@@ -40,11 +38,6 @@ const PRICE_MAP = {
   pri_01kxcn5637qsqer3pf7vptrrxd: { product: 'convertiq', plan: 'studio' },   // $2868/yr
 };
 
-const PLAN_PRODUCT = {
-  basic: 'replymind', pro: 'replymind', premium: 'replymind', business: 'replymind',
-  operator: 'convertiq', studio: 'convertiq',
-};
-
 function verifySignature(rawBody, sigHeader, secret) {
   if (!secret || !sigHeader) return false;
   const parts = {};
@@ -59,11 +52,6 @@ function verifySignature(rawBody, sigHeader, secret) {
   const a = Buffer.from(digest);
   const b = Buffer.from(h1);
   return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
-
-function normalizePlan(p) {
-  const v = (p || '').toString().toLowerCase().trim();
-  return VALID_PLANS.includes(v) && v !== 'free' ? v : null;
 }
 
 function firstPriceId(data) {
@@ -88,15 +76,21 @@ function extract(data) {
 
   // The price id is the source of truth: it is set by Paddle, not by our own page,
   // so it cannot be tampered with by whoever opened the checkout.
-  const byPrice = PRICE_MAP[firstPriceId(data)];
-  const cdPlan = normalizePlan(cd.plan);
+  const priceId = firstPriceId(data);
+  const byPrice = PRICE_MAP[priceId];
+  return {
+    email,
+    plan: byPrice?.plan || null,
+    product: byPrice?.product || null,
+    priceId
+  };
+}
 
-  const plan = byPrice ? byPrice.plan : (cdPlan || 'pro');
-  const product = byPrice
-    ? byPrice.product
-    : (cd.product || PLAN_PRODUCT[plan] || 'replymind');
-
-  return { email, plan, product };
+function requireKnownPurchase(purchase) {
+  if (!purchase.plan || !purchase.product) {
+    throw new Error(`Unknown Paddle price: ${purchase.priceId || 'missing'}`);
+  }
+  return purchase;
 }
 
 async function fulfill(email, product, plan, meta) {
@@ -114,7 +108,7 @@ async function fulfill(email, product, plan, meta) {
     console.log('paddle_plan_activated', JSON.stringify({ email, product, plan }));
   } else {
     await db.setPendingUpgrade(email, plan, product);
-    await db.logEvent(null, 'pending_upgrade_stored', { email, product, plan });
+    await db.logEvent(null, 'pending_upgrade_stored', { product, plan });
     console.log('paddle_pending_upgrade', JSON.stringify({ email, product, plan }));
   }
 }
@@ -152,10 +146,10 @@ router.post('/webhook', async (req, res) => {
 
   try {
     if (type === 'transaction.completed' || type === 'subscription.activated' || type === 'subscription.created') {
-      const { email, product, plan } = extract(data);
+      const { email, product, plan } = requireKnownPurchase(extract(data));
       await fulfill(email, product, plan, { event: type });
     } else if (type === 'subscription.updated' || type === 'subscription.resumed') {
-      const { email, product, plan } = extract(data);
+      const { email, product, plan } = requireKnownPurchase(extract(data));
       const status = data.status;
       if (status === 'canceled' || status === 'paused') {
         await downgrade(email, product, { event: type, status });
@@ -163,13 +157,15 @@ router.post('/webhook', async (req, res) => {
         await fulfill(email, product, plan, { event: type, status });
       }
     } else if (type === 'subscription.canceled' || type === 'subscription.paused') {
-      const { email, product } = extract(data);
+      const { email, product } = requireKnownPurchase(extract(data));
       await downgrade(email, product, { event: type });
     }
     // Other events acknowledged and ignored.
   } catch (err) {
     console.error('paddle_webhook_error', err.message);
-    // Still 200 so Paddle doesn't hammer retries on a transient DB blip we log above.
+    // A non-2xx response asks Paddle to retry instead of silently losing a paid
+    // activation when the database is temporarily unavailable or a price is unmapped.
+    return res.status(500).json({ error: 'fulfillment_failed' });
   }
 
   res.json({ received: true });

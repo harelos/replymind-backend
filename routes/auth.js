@@ -11,12 +11,23 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const ALL_INTENTS = ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce','custom'];
 const PLAN_LIMITS = {
-  free: { monthlyReplies: 15, intents: ['accept','decline','maybe','schedule','ask_info'], contacts: 0, reminders: 0 },
-  basic: { monthlyReplies: 50, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce'], contacts: 10, reminders: 5 },
-  pro: { monthlyReplies: Infinity, intents: ALL_INTENTS, contacts: 50, reminders: 25 },
+  free: { monthlyReplies: 15, intents: ['accept','decline','maybe','schedule','ask_info'], contacts: 1, reminders: 1 },
+  basic: { monthlyReplies: 50, intents: ['accept','decline','maybe','schedule','delegate','ask_info','check_in','negotiate','thank_you','apologize','introduce'], contacts: 20, reminders: 5 },
+  pro: { monthlyReplies: Infinity, intents: ALL_INTENTS, contacts: Infinity, reminders: Infinity },
   premium: { monthlyReplies: Infinity, intents: ALL_INTENTS, contacts: Infinity, reminders: Infinity },
   business: { monthlyReplies: Infinity, intents: ALL_INTENTS, contacts: Infinity, reminders: Infinity }
 };
+
+const CLIENT_EVENTS = new Set([
+  'onboarding_voice_completed', 'onboarding_completed', 'account_registered',
+  'login_succeeded', 'reply_generated', 'reply_inserted', 'contact_remembered',
+  'contact_note_saved', 'contact_forgotten', 'first_success_shown',
+  'memory_limit_shown', 'checkout_clicked', 'generation_error'
+]);
+const CLIENT_EVENT_METADATA = new Set([
+  'surface', 'plan', 'intent', 'outcome', 'errorType',
+  'contactCount', 'step', 'source'
+]);
 
 // Apply any Paddle payment that landed before this account existed.
 // The pending row now carries the product, so a ConvertIQ purchase made before
@@ -67,7 +78,7 @@ router.post('/register', async (req, res) => {
     await applyPendingUpgrade(user);
 
     const token = jwt.sign({ userId: user.id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '30d' });
-    await db.logEvent(user.id, 'account_created', { email: user.email, industry: industry || '' });
+    await db.logEvent(user.id, 'account_created', { industry: industry || '' });
 
     res.status(201).json({
       token,
@@ -210,6 +221,28 @@ router.post('/reply-choice', validateToken, async (req, res) => {
   }
 });
 
+// Privacy-safe product funnel events. Message and contact content are rejected.
+router.post('/event', validateToken, async (req, res) => {
+  const { eventName, metadata } = req.body || {};
+  if (!CLIENT_EVENTS.has(eventName))
+    return res.status(400).json({ error: 'Unsupported event' });
+
+  const safeMetadata = {};
+  Object.entries(metadata || {}).forEach(([key, value]) => {
+    if (!CLIENT_EVENT_METADATA.has(key)) return;
+    if (!['string', 'number', 'boolean'].includes(typeof value)) return;
+    safeMetadata[key] = typeof value === 'string' ? value.slice(0, 80) : value;
+  });
+
+  try {
+    await db.logEvent(req.userId, eventName, safeMetadata);
+    res.status(202).json({ success: true });
+  } catch (err) {
+    console.error('Product event error:', err.message);
+    res.status(500).json({ error: 'Could not record event' });
+  }
+});
+
 // POST /api/auth/feedback — update feedback on a reply choice
 router.post('/feedback', validateToken, async (req, res) => {
   const { choiceId, feedback } = req.body;
@@ -226,18 +259,27 @@ router.post('/feedback', validateToken, async (req, res) => {
 
 // GET /api/auth/me — get current user info
 router.get('/me', validateToken, async (req, res) => {
-  const user = req.user;
-  const streak = await db.updateStreak(user.id);
-  res.json({
-    user: {
-      id: user.id, email: user.email, plan: user.plan,
-      toneProfile: user.tone_profile || '', industry: user.industry || '',
-      streakDays: streak || user.streak_days || 0,
-      totalReplies: user.total_replies || 0,
-      monthlyUseCount: user.monthly_use_count || 0,
-      planLimits: PLAN_LIMITS[user.plan]
-    }
-  });
+  try {
+    const user = req.user;
+    const replyChoiceCount = await db.getReplyChoiceCount(user.id);
+    const totalReplies = user.total_replies || 0;
+    res.json({
+      user: {
+        id: user.id, email: user.email, plan: user.plan,
+        toneProfile: user.tone_profile || '', industry: user.industry || '',
+        streakDays: user.streak_days || 0,
+        totalReplies,
+        timeSaved: Math.round(totalReplies * 3.5),
+        useCount: user.use_count || 0,
+        monthlyUseCount: user.monthly_use_count || 0,
+        replyChoiceCount,
+        planLimits: PLAN_LIMITS[user.plan]
+      }
+    });
+  } catch (err) {
+    console.error('Session refresh error:', err.message);
+    res.status(500).json({ error: 'Could not refresh account' });
+  }
 });
 
 // ─── Admin routes ─────────────────────────────────────────────────────────────
@@ -261,7 +303,7 @@ router.get('/admin/users', adminAuth, async (req, res) => {
 
 router.get('/admin/analytics', adminAuth, async (req, res) => {
   try {
-    const [stats, dau, wau, mau, intents, contexts, feedback, tokenTotal, industries] = await Promise.all([
+    const [stats, dau, wau, mau, intents, contexts, feedback, tokenTotal, industries, funnel] = await Promise.all([
       db.getUserStats(),
       db.getDAU(),
       db.getWAU(),
@@ -270,15 +312,17 @@ router.get('/admin/analytics', adminAuth, async (req, res) => {
       db.getContextDistribution(),
       db.getFeedbackStats(),
       db.getTokenUsageTotal(),
-      db.getIndustryDistribution()
+      db.getIndustryDistribution(),
+      db.getFunnelStats(parseInt(req.query.days) || 30)
     ]);
 
     const basicCount = parseInt(stats.basic_users) || 0;
     const proCount = parseInt(stats.pro_users) || 0;
     const premiumCount = parseInt(stats.premium_users) || 0;
-    const mrr = (basicCount * 9) + (proCount * 29) + (premiumCount * 99);
+    const businessCount = parseInt(stats.business_users) || 0;
+    const mrr = (basicCount * 9) + (proCount * 19) + (businessCount * 49) + (premiumCount * 99);
 
-    res.json({ stats, dau, wau, mau, mrr, intents, contexts, feedback, tokenUsage: tokenTotal, industries });
+    res.json({ stats, dau, wau, mau, mrr, intents, contexts, feedback, tokenUsage: tokenTotal, industries, funnel });
   } catch (err) {
     console.error('Analytics error:', err.message);
     res.status(500).json({ error: 'Failed to fetch analytics' });

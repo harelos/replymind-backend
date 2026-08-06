@@ -245,9 +245,25 @@
         <div class="stat-card blue"><div class="label">DAU / WAU / MAU</div><div class="value" id="s-active">—</div></div>
         <div class="stat-card"><div class="label">Total Replies</div><div class="value" id="s-replies">—</div></div>
         <div class="stat-card"><div class="label">Free</div><div class="value" id="s-free">—</div></div>
-        <div class="stat-card"><div class="label">Basic</div><div class="value" id="s-basic">—</div><div class="sub">$9/mo</div></div>
-        <div class="stat-card"><div class="label">Pro</div><div class="value" id="s-pro">—</div><div class="sub">$29/mo</div></div>
-        <div class="stat-card"><div class="label">Premium</div><div class="value" id="s-premium">—</div><div class="sub">$99/mo</div></div>
+        <div class="stat-card"><div class="label">Pro</div><div class="value" id="s-pro">—</div><div class="sub">$19/mo</div></div>
+        <div class="stat-card"><div class="label">Business</div><div class="value" id="s-business">—</div><div class="sub">$49/mo</div></div>
+        <div class="stat-card"><div class="label">Legacy Plans</div><div class="value" id="s-legacy">—</div><div class="sub">Basic + Premium</div></div>
+      </div>
+
+      <div class="chart-box" style="margin-bottom:20px">
+        <h3>Activation Funnel (30 days)</h3>
+        <p style="color:#6b7280;font-size:12px;margin:-8px 0 14px">Onboarding, insertion, memory, and checkout steps include only users who opted into privacy-safe analytics.</p>
+        <div class="stats-grid" id="funnelGrid">
+          <div class="stat-card"><div class="label">Signups</div><div class="value" id="f-signup">0</div></div>
+          <div class="stat-card"><div class="label">Voice Ready</div><div class="value" id="f-voice">0</div></div>
+          <div class="stat-card"><div class="label">Onboarding Complete</div><div class="value" id="f-onboarded">0</div></div>
+          <div class="stat-card"><div class="label">Replies Generated</div><div class="value" id="f-generated">0</div></div>
+          <div class="stat-card"><div class="label">Replies Inserted</div><div class="value" id="f-inserted">0</div></div>
+          <div class="stat-card"><div class="label">Contacts Remembered</div><div class="value" id="f-contact">0</div></div>
+          <div class="stat-card"><div class="label">Memory Limit Seen</div><div class="value" id="f-limit">0</div></div>
+          <div class="stat-card"><div class="label">Checkout Clicks</div><div class="value" id="f-checkout">0</div></div>
+          <div class="stat-card accent"><div class="label">Activated</div><div class="value" id="f-paid">0</div></div>
+        </div>
       </div>
 
       <div class="charts-grid">
@@ -417,14 +433,25 @@ async function loadAnalytics() {
   el('s-active', `${d.dau || 0} / ${d.wau || 0} / ${d.mau || 0}`);
   el('s-replies', d.stats.total_replies || 0);
   el('s-free', d.stats.free_users || 0);
-  el('s-basic', d.stats.basic_users || 0);
   el('s-pro', d.stats.pro_users || 0);
-  el('s-premium', d.stats.premium_users || 0);
+  el('s-business', d.stats.business_users || 0);
+  el('s-legacy', (parseInt(d.stats.basic_users) || 0) + (parseInt(d.stats.premium_users) || 0));
+
+  const funnel = Object.fromEntries((d.funnel || []).map(row => [row.event_name, row.users || 0]));
+  el('f-signup', funnel.account_created || 0);
+  el('f-voice', funnel.onboarding_voice_completed || 0);
+  el('f-onboarded', funnel.onboarding_completed || 0);
+  el('f-generated', funnel.reply_generated || 0);
+  el('f-inserted', funnel.reply_inserted || 0);
+  el('f-contact', funnel.contact_remembered || 0);
+  el('f-limit', funnel.memory_limit_shown || 0);
+  el('f-checkout', funnel.checkout_clicked || 0);
+  el('f-paid', funnel.plan_activated || 0);
 
   // Feedback
-  const fb = d.feedback || {};
-  el('s-fbup', fb.thumbs_up || 0);
-  el('s-fbdown', fb.thumbs_down || 0);
+  const fb = Object.fromEntries((d.feedback || []).map(row => [row.feedback, row.count]));
+  el('s-fbup', fb.up || 0);
+  el('s-fbdown', fb.down || 0);
 
   // Tokens
   const tk = d.tokenUsage || {};
@@ -468,7 +495,7 @@ function renderUsers(users) {
       <td><span class="badge badge-${u.plan}">${u.plan}</span></td>
       <td>
         <select class="plan-select" data-uid="${u.id}" data-current="${u.plan}" onchange="changePlan(this)">
-          ${['free','basic','pro','premium'].map(p => `<option value="${p}" ${p===u.plan?'selected':''}>${p}</option>`).join('')}
+          ${['free','basic','pro','business','premium'].map(p => `<option value="${p}" ${p===u.plan?'selected':''}>${p}</option>`).join('')}
         </select>
       </td>
       <td>${u.total_replies || 0}</td>
@@ -476,7 +503,7 @@ function renderUsers(users) {
       <td>${u.streak_days || 0}🔥</td>
       <td>${esc(u.industry || '—')}</td>
       <td>${fmtDate(u.created_at)}</td>
-      <td>${fmtDate(u.last_active)}</td>
+      <td>${fmtDate(u.last_active_date)}</td>
     </tr>
   `).join('');
 }
@@ -522,9 +549,9 @@ async function loadEvents() {
   c.innerHTML = (d.events || []).map(e => `
     <div class="event-row">
       <span class="event-time">${fmtDateTime(e.created_at)}</span>
-      <span class="event-user">${esc(e.email || 'system')}</span>
-      <span class="event-type">${esc(e.event_type)}</span>
-      <span class="event-data">${esc(tryJson(e.event_data))}</span>
+      <span class="event-user">${esc(e.actor || 'event')}</span>
+      <span class="event-type">${esc(e.event_name)}</span>
+      <span class="event-data">${esc(tryJson(e.metadata))}</span>
     </div>
   `).join('') || '<div style="padding:24px;color:#6b7280">No events yet</div>';
 }
