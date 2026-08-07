@@ -24,6 +24,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/generate', require('./routes/generate'));
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api/convertiq', require('./routes/convertiq'));
+app.use('/api/leads', require('./routes/leads'));
 
 // Health check
 app.get('/health', (req, res) => {

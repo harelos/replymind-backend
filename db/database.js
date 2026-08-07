@@ -63,6 +63,15 @@ async function initDB() {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
 
+      CREATE TABLE IF NOT EXISTS tool_leads (
+        id SERIAL PRIMARY KEY,
+        email VARCHAR(255) NOT NULL,
+        source_url VARCHAR(500) NOT NULL,
+        tool_slug VARCHAR(150) NOT NULL,
+        language VARCHAR(10) DEFAULT 'en',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
       -- One account, many products. users.plan stays as ReplyMind's plan for
       -- backwards compatibility; everything new reads from here so a user can be
       -- Pro on ReplyMind and free on ConvertIQ without the two fighting.
@@ -468,6 +477,26 @@ const db = {
       `SELECT id, email, plan, total_replies, streak_days, industry, last_active_date, created_at
        FROM users ORDER BY total_replies DESC LIMIT $1`,
       [parseInt(limit)]
+    );
+    return rows;
+  },
+
+  async saveToolLead({ email, sourceUrl, toolSlug, language }) {
+    const { rows } = await pool.query(
+      `INSERT INTO tool_leads (email, source_url, tool_slug, language, created_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       RETURNING *`,
+      [email.toLowerCase().trim(), sourceUrl, toolSlug, language || 'en']
+    );
+    return rows[0];
+  },
+
+  async getToolLeadsStats() {
+    const { rows } = await pool.query(
+      `SELECT tool_slug, language, COUNT(*) as count
+       FROM tool_leads
+       GROUP BY tool_slug, language
+       ORDER BY count DESC`
     );
     return rows;
   }
