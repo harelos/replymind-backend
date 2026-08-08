@@ -195,4 +195,106 @@ Return ONLY a raw JSON object — no markdown, no backticks, no explanation:
   }
 });
 
+router.post('/batch', validateToken, async (req, res) => {
+  const { rows, toneProfile, intent, customPrompt, replyLength = 'medium' } = req.body;
+
+  if (!rows || !Array.isArray(rows) || rows.length === 0)
+    return res.status(400).json({ error: 'Rows array is required', code: 'NO_ROWS' });
+
+  if (rows.length > 20)
+    return res.status(400).json({ error: 'Maximum batch size is 20 rows', code: 'BATCH_TOO_LARGE' });
+
+  let user = req.user;
+  user = await db.checkAndDowngradeTrial(user);
+  const plan = user.plan || 'free';
+  const limits = PLAN_LIMITS[plan];
+
+  if (!limits.intents.includes(intent))
+    return res.status(403).json({ error: `${INTENT_LABELS[intent]} is not available on your plan`, code: 'INTENT_LOCKED', upgrade: true });
+
+  // Rough usage check
+  if (plan === 'free' && user.use_count + rows.length > limits.monthlyReplies) {
+    return res.status(403).json({ error: 'Not enough free replies left for this batch.', code: 'FREE_LIMIT_REACHED', upgradeUrl: 'https://harelos.github.io/replymind' });
+  }
+  if ((plan === 'basic' || plan === 'pro') && user.monthly_use_count + rows.length > limits.monthlyReplies) {
+    return res.status(403).json({ error: 'Not enough monthly limit left for this batch.', code: 'MONTHLY_LIMIT_REACHED', upgradeUrl: 'https://harelos.github.io/replymind' });
+  }
+
+  const lengthGuide = { short: '30-60 words', medium: '60-100 words', detailed: '100-150 words' }[replyLength] || '60-100 words';
+  const hasToneProfile = toneProfile && toneProfile.trim().length > 0;
+  const toneInstruction = hasToneProfile
+    ? `The sender's personal communication style: "${toneProfile.trim()}". Match this tone very carefully.`
+    : 'Use a professional, warm, and direct tone.';
+
+  const intentInstruction = intent === 'custom' && customPrompt
+    ? customPrompt.slice(0, 200)
+    : INTENT_PROMPTS[intent];
+
+  const systemPrompt = `You are an expert business communication assistant.
+${toneInstruction}
+
+INTENT: ${intentInstruction}
+
+IMPORTANT RULES:
+1. The reply should be ${lengthGuide}.
+2. Write exactly ONE message tailored to the prospect.
+3. Be persuasive, authentic, and highly customized to their context.
+4. Do NOT include a subject line.
+
+Return ONLY a raw JSON object — no markdown, no backticks, no explanation:
+{"text":"...","wordCount":N}`;
+
+  try {
+    const results = await Promise.all(rows.map(async (row) => {
+      const prompt = `Draft an email to ${row.name || 'this person'}. 
+Context: ${row.context || 'general outreach'}. 
+Original message/notes: ${row.notes || ''}`;
+
+      try {
+        const completion = await openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          max_tokens: 600,
+          temperature: 0.7,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: prompt }
+          ]
+        });
+        
+        const raw = completion.choices[0].message.content.trim();
+        const reply = JSON.parse(raw.replace(/```json|```/g, '').trim());
+        
+        // Log individual token usage
+        const usage = completion.usage || {};
+        await db.logEvent(user.id, 'token_usage', {
+          prompt_tokens: usage.prompt_tokens || 0,
+          completion_tokens: usage.completion_tokens || 0,
+          total_tokens: usage.total_tokens || 0,
+          model: 'gpt-4o-mini',
+          intent, context: 'batch_campaign'
+        });
+
+        await db.incrementUseCount(user.id);
+        
+        return {
+          email: row.email,
+          name: row.name,
+          draft: reply.text,
+          status: 'success'
+        };
+      } catch (err) {
+        return { email: row.email, name: row.name, draft: null, status: 'error', error: err.message };
+      }
+    }));
+
+    await db.updateStreak(user.id);
+    await db.logEvent(user.id, 'batch_generated', { count: rows.length, intent, plan });
+
+    res.json({ results });
+  } catch (err) {
+    console.error('Batch error:', err.message);
+    res.status(500).json({ error: 'Failed to process batch campaign.', code: 'SERVER_ERROR' });
+  }
+});
+
 module.exports = router;
