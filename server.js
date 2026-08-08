@@ -30,8 +30,14 @@ app.use('/api/payments/webhook', express.raw({ type: '*/*', limit: '256kb' }));
 
 app.use(express.json({ limit: '10kb' }));
 
-// Serve admin panel
-app.use('/admin', express.static(path.join(__dirname, 'admin')));
+// Serve admin panel (no-cache so updates render immediately)
+app.use('/admin', express.static(path.join(__dirname, 'admin'), {
+  etag: false,
+  lastModified: false,
+  setHeaders: (res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  }
+}));
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
