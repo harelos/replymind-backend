@@ -62,7 +62,8 @@ async function initDB() {
         dispatched_at TIMESTAMPTZ,
         delivered_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        CONSTRAINT unique_user_segment UNIQUE(user_id, segment)
       );
 
       CREATE TABLE IF NOT EXISTS reply_choices (
@@ -120,6 +121,26 @@ async function initDB() {
       ALTER TABLE pending_upgrades
         ADD COLUMN IF NOT EXISTS product VARCHAR(32) NOT NULL DEFAULT 'replymind';
     `);
+    // Clean up any duplicates before adding the constraint (if it didn't exist)
+    await client.query(`
+      DELETE FROM nudges
+      WHERE id IN (
+        SELECT id
+        FROM (
+          SELECT id, ROW_NUMBER() OVER (PARTITION BY user_id, segment ORDER BY created_at DESC) AS rnum
+          FROM nudges
+        ) t
+        WHERE t.rnum > 1
+      );
+    `);
+    
+    // Attempt to add the constraint if it was created before the constraint existed
+    try {
+      await client.query(`ALTER TABLE nudges ADD CONSTRAINT unique_user_segment UNIQUE (user_id, segment);`);
+    } catch (e) {
+      // Ignore error if constraint already exists
+    }
+
     console.log('Database tables initialized');
   } finally {
     client.release();
@@ -584,12 +605,28 @@ const db = {
     return rows[0] || null;
   },
 
+  async getUserByEmail(email) {
+    const { rows } = await pool.query(`SELECT * FROM users WHERE email = $1`, [email]);
+    return rows[0] || null;
+  },
+
+  async createManualNudge(userId, message, ctaUrl) {
+    const { rows } = await pool.query(
+      `INSERT INTO nudges (user_id, segment, risk_score, status_label, campaign_name, trigger_channel, ai_message, cta_label, cta_action, confidence_score, approved_by_admin)
+       VALUES ($1, 'MANUAL_NUDGE', 100, 'Manual Dispatch', 'Admin Manual Nudge', 'extension_popover', $2, 'Open Link', $3, 100, TRUE)
+       RETURNING *`,
+      [userId, message, ctaUrl || '']
+    );
+    return rows[0];
+  },
+
   // ─── Predictive Nudges & Campaign Engine ─────────────────────────────────────
   async getNudgesForAdmin() {
     const { rows } = await pool.query(
       `SELECT n.*, u.email as user_email
        FROM nudges n
        JOIN users u ON n.user_id = u.id
+       WHERE n.delivered_at IS NULL
        ORDER BY n.risk_score DESC, n.created_at DESC`
     );
     return rows;
@@ -672,11 +709,11 @@ const db = {
         segment = 'CONVERSION_CANDIDATE';
         statusLabel = 'Free Quota Reached (Pro Candidate)';
         riskScore = 85;
-        campaignName = 'Pro Trial Flash Offer ($19/mo)';
+        campaignName = 'Time-Sensitive Flash Offer: 50% Off Pro ($9.50/mo)';
         triggerChannel = 'extension_popover';
-        aiMessage = `🔥 You've used all 5 free replies today! Start your 7-day Pro trial to unlock unlimited AI replies.`;
-        ctaLabel = 'Start 7-Day Pro Trial';
-        ctaAction = 'navigate_checkout';
+        aiMessage = `🔥 You've used all 5 free replies! Claim your 48-hour 50% discount: Pro Plan for $9.50/mo (coupon REPLY50).`;
+        ctaLabel = 'Claim 50% Off Pro';
+        ctaAction = 'https://replymind.xyz/checkout?coupon=REPLY50';
         confidenceScore = 93;
       } else if ((u.streak_days || 0) >= 2 && hoursInactive >= 24) {
         segment = 'STREAK_SAVER';
@@ -694,17 +731,22 @@ const db = {
         riskScore = 91;
         campaignName = 'Re-engagement Flash Offer';
         triggerChannel = 'extension_popover';
-        aiMessage = `We miss you! Start your 7-day Pro trial to unlock unlimited ReplyMind AI replies in Gmail & LinkedIn.`;
-        ctaLabel = 'Start 7-Day Free Trial';
-        ctaAction = 'navigate_checkout';
+        aiMessage = `🔥 We miss you! Claim your 48-hour 50% discount: Pro Plan for $9.50/mo (coupon REPLY50).`;
+        ctaLabel = 'Claim 50% Off Pro';
+        ctaAction = 'https://replymind.xyz/checkout?coupon=REPLY50';
         confidenceScore = 89;
       }
+
+      // Clear old undelivered nudges for this user to prevent duplication across segments
+      await pool.query(
+        `DELETE FROM nudges WHERE user_id = $1 AND delivered_at IS NULL`,
+        [u.id]
+      );
 
       if (segment !== 'HEALTHY_ADVOCATE') {
         await pool.query(
           `INSERT INTO nudges (user_id, segment, risk_score, status_label, campaign_name, trigger_channel, ai_message, cta_label, cta_action, confidence_score, approved_by_admin)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-           ON CONFLICT DO NOTHING`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
           [u.id, segment, riskScore, statusLabel, campaignName, triggerChannel, aiMessage, ctaLabel, ctaAction, confidenceScore, confidenceScore >= 90]
         );
       }
