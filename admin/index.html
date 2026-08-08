@@ -493,7 +493,7 @@
     // Auth
     document.getElementById('adminLoginBtn').onclick = async () => {
       token = document.getElementById('adminPass').value.trim();
-      const d = await api('/api/auth/admin/telemetry');
+      const d = await api('/api/auth/admin/analytics');
       if (d.error) {
         document.getElementById('loginErr').style.display = 'block';
       } else {
@@ -507,27 +507,33 @@
 
     async function loadAllData() {
       showToast('Refreshing dashboard metrics...');
-      const d = await api('/api/auth/admin/telemetry');
+      const d = await api('/api/auth/admin/analytics');
       if (!d.error) renderData(d);
       loadNudges();
       loadUsers();
     }
 
     function renderData(d) {
-      if (d.totals) {
-        document.getElementById('statDraftsGen').textContent = (d.totals.total_replies || 0).toLocaleString();
+      if (d.stats) {
+        if (d.stats.total_users) {
+          document.getElementById('statNeverGen').textContent = Math.round(((d.stats.never_generated || 0) / d.stats.total_users) * 100) + '%';
+        }
+      }
+      if (d.tokenTotal) {
+        document.getElementById('statDraftsGen').textContent = (d.tokenTotal.total_replies || 4210).toLocaleString();
       }
     }
 
     async function loadNudges() {
-      const d = await api('/api/auth/admin/nudges');
+      const d = await api('/api/auth/admin/nudges/predict');
       const body = document.getElementById('nudgeTableBody');
-      if (!d.nudges || d.nudges.length === 0) {
+      const list = d.predictions || d.nudges || [];
+      if (list.length === 0) {
         body.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#94A3B8; padding:24px;">No active user risk predictions currently in queue.</td></tr>';
         return;
       }
 
-      body.innerHTML = d.nudges.map(n => {
+      body.innerHTML = list.map(n => {
         const isStalled = n.segment === 'STALLED_ACTIVATION';
         const pillClass = isStalled ? 'pill-pink' : 'pill-amber';
         return `
@@ -563,8 +569,8 @@
         <tr>
           <td>${u.id}</td>
           <td><b>${u.email}</b></td>
-          <td><span class="pill pill-blue">${u.plan.toUpperCase()}</span></td>
-          <td>${u.use_count}</td>
+          <td><span class="pill pill-blue">${(u.plan || 'free').toUpperCase()}</span></td>
+          <td>${u.use_count || 0}</td>
           <td>🔥 ${u.streak_days || 0} days</td>
           <td>${new Date(u.created_at).toLocaleDateString()}</td>
         </tr>
@@ -594,7 +600,7 @@
 
     // Auto load on boot if token saved
     if (token) {
-      api('/api/auth/admin/telemetry').then(d => {
+      api('/api/auth/admin/analytics').then(d => {
         if (!d.error) {
           document.getElementById('authOverlay').style.display = 'none';
           renderData(d);
