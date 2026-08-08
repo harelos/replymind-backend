@@ -100,7 +100,7 @@
       padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 3px 0 rgba(0,0,0,0.02);
     }
 
-    /* 4 Top Stat Cards */
+    /* Top Stat Cards */
     .top-stats-grid {
       display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px;
     }
@@ -129,7 +129,7 @@
       display: flex; flex-direction: column; justify-content: space-between;
     }
 
-    /* Lifecycle Funnel 4 Cards */
+    /* Lifecycle Funnel Cards */
     .funnel-stages {
       display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0 20px;
     }
@@ -140,7 +140,7 @@
     .stage-name { font-size: 13px; font-weight: 700; color: #0F172A; margin-bottom: 6px; }
     .stage-desc { font-size: 11px; color: #64748B; line-height: 1.4; }
 
-    /* Queue Table */
+    /* Tables */
     table { width: 100%; border-collapse: collapse; text-align: left; }
     th {
       font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase;
@@ -157,6 +157,7 @@
     .pill-amber { background: #FEF3C7; color: #B45309; }
     .pill-green { background: #D1FAE5; color: #047857; }
     .pill-blue { background: #EFF6FF; color: #1D4ED8; }
+    .pill-purple { background: #F3E8FF; color: #7E22CE; }
 
     .btn-dispatch {
       background: #047857; color: white; border: none; padding: 6px 12px; border-radius: 6px;
@@ -229,28 +230,28 @@
     <!-- 4 Top Stat Cards -->
     <div class="top-stats-grid">
       <div class="stat-card">
-        <div class="stat-label">AVG TIME TO 1ST REPLY</div>
-        <div class="stat-val" id="statAvgTime">1440m</div>
-        <div class="stat-sub">Time from install to first inserted reply</div>
-        <div class="stat-icon-wrap" style="background:#F3E8FF; color:#7E22CE;">⏱</div>
+        <div class="stat-label">TOTAL USERS</div>
+        <div class="stat-val" id="statTotalUsers">0</div>
+        <div class="stat-sub" id="statUsersSub">Registered accounts in database</div>
+        <div class="stat-icon-wrap" style="background:#F3E8FF; color:#7E22CE;">👥</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">NEVER GENERATED %</div>
-        <div class="stat-val" id="statNeverGen">75%</div>
+        <div class="stat-val" id="statNeverGen">0%</div>
         <div class="stat-sub">Targeted by 1k nudge alarm</div>
         <div class="stat-icon-wrap" style="background:#FEF3C7; color:#B45309;">⚠</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">ACTIVE 3-DAY TRIALS</div>
-        <div class="stat-val" id="statActiveTrials">24</div>
-        <div class="stat-sub">Paddle trial subscribers</div>
+        <div class="stat-label">ACTIVE PRO USERS</div>
+        <div class="stat-val" id="statActiveTrials">0</div>
+        <div class="stat-sub">Active paid subscriptions</div>
         <div class="stat-icon-wrap" style="background:#FCE7F3; color:#BE185D;">📈</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">CHECKOUT CONVERSIONS</div>
-        <div class="stat-val" id="statConversions">14</div>
-        <div class="stat-sub">Pushing via Paddle webhook</div>
-        <div class="stat-icon-wrap" style="background:#D1FAE5; color:#047857;">💲</div>
+        <div class="stat-label">TOTAL REPLIES INSERTED</div>
+        <div class="stat-val" id="statTotalReplies">0</div>
+        <div class="stat-sub">Pushed via Chrome Extension</div>
+        <div class="stat-icon-wrap" style="background:#D1FAE5; color:#047857;">⚡</div>
       </div>
     </div>
 
@@ -269,8 +270,8 @@
         <div class="campaign-banner">
           <div class="campaign-dark-box">
             <div style="font-size:11px; font-weight:700; color:#94A3B8;">TOTAL DRAFTS GENERATED</div>
-            <div style="font-size:28px; font-weight:700; color:white; margin:8px 0;" id="statDraftsGen">4,210</div>
-            <div style="font-size:11px; color:#94A3B8;">Across 151 Micro Campaigns</div>
+            <div style="font-size:28px; font-weight:700; color:white; margin:8px 0;" id="statDraftsGen">0</div>
+            <div style="font-size:11px; color:#94A3B8;">Across live extension users</div>
           </div>
           <div class="campaign-metric-box">
             <div style="font-size:11px; font-weight:700; color:#64748B;">AVG OPEN RATE (ESTIMATED)</div>
@@ -285,91 +286,64 @@
         </div>
       </div>
 
-      <!-- Surface Breakdown & Paywall Funnel -->
-      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; margin-bottom:20px;">
-        <div class="card">
-          <h3 style="font-size:14px; font-weight:700; margin-bottom:12px;">📱 Platform Surface Breakdown (Gmail vs LinkedIn)</h3>
-          <div style="margin-bottom:12px;">
-            <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">
-              <span>Gmail</span> <span style="font-weight:700;">80%</span>
-            </div>
-            <div style="height:8px; background:#F1F5F9; border-radius:4px; overflow:hidden;">
-              <div style="width:80%; height:100%; background:#7C3AED;"></div>
-            </div>
+      <!-- Activation Funnel -->
+      <div class="card">
+        <h3 style="font-size:15px; font-weight:700; margin-bottom:4px;">🎯 Real Activation & Conversion Funnel</h3>
+        <p style="font-size:12px; color:#64748B; margin-bottom:14px;">User journey progression from signup to full paid activation.</p>
+        <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; text-align:center;" id="funnelGrid">
+          <div style="background:#F8FAFC; padding:12px; border-radius:8px; border:1px solid #E2E8F0;">
+            <div style="font-size:10px; font-weight:700; color:#64748B; text-transform:uppercase;">Signups</div>
+            <div style="font-size:22px; font-weight:700; color:#0F172A; margin-top:4px;" id="fnSignups">0</div>
           </div>
-          <div>
-            <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">
-              <span>LinkedIn</span> <span style="font-weight:700;">20%</span>
-            </div>
-            <div style="height:8px; background:#F1F5F9; border-radius:4px; overflow:hidden;">
-              <div style="width:20%; height:100%; background:#2563EB;"></div>
-            </div>
+          <div style="background:#F8FAFC; padding:12px; border-radius:8px; border:1px solid #E2E8F0;">
+            <div style="font-size:10px; font-weight:700; color:#64748B; text-transform:uppercase;">Voice Ready</div>
+            <div style="font-size:22px; font-weight:700; color:#0F172A; margin-top:4px;" id="fnVoiceReady">0</div>
           </div>
-        </div>
-
-        <div class="card">
-          <h3 style="font-size:14px; font-weight:700; margin-bottom:12px;">💸 Paywall & Paddle Conversion Funnel</h3>
-          <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:8px; text-align:center;">
-            <div style="background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0;">
-              <div style="font-size:10px; color:#64748B;">Limits Hit</div>
-              <div style="font-size:18px; font-weight:700;">6</div>
-            </div>
-            <div style="background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0;">
-              <div style="font-size:10px; color:#64748B;">Intent Locked</div>
-              <div style="font-size:18px; font-weight:700;">6</div>
-            </div>
-            <div style="background:#F8FAFC; padding:10px; border-radius:6px; border:1px solid #E2E8F0;">
-              <div style="font-size:10px; color:#64748B;">Checkout Click</div>
-              <div style="font-size:18px; font-weight:700;">6</div>
-            </div>
-            <div style="background:#ECFDF5; padding:10px; border-radius:6px; border:1px solid #A7F3D0; color:#047857;">
-              <div style="font-size:10px;">Trial Started</div>
-              <div style="font-size:18px; font-weight:700;">18</div>
-            </div>
+          <div style="background:#F8FAFC; padding:12px; border-radius:8px; border:1px solid #E2E8F0;">
+            <div style="font-size:10px; font-weight:700; color:#64748B; text-transform:uppercase;">Replies Generated</div>
+            <div style="font-size:22px; font-weight:700; color:#0F172A; margin-top:4px;" id="fnRepliesGen">0</div>
+          </div>
+          <div style="background:#ECFDF5; padding:12px; border-radius:8px; border:1px solid #A7F3D0; color:#047857;">
+            <div style="font-size:10px; font-weight:700; text-transform:uppercase;">Activated Pro</div>
+            <div style="font-size:22px; font-weight:700; margin-top:4px;" id="fnActivated">0</div>
           </div>
         </div>
       </div>
 
-      <!-- Cohort Matrix -->
-      <div class="card">
-        <h3 style="font-size:14px; font-weight:700; margin-bottom:14px;">📊 Weekly Cohort Retention Matrix</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Cohort</th>
-              <th>Users</th>
-              <th>Week 1</th>
-              <th>Week 2</th>
-              <th>Week 3</th>
-              <th>Week 4</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><b>Week 1 (Aug 1 - Aug 7)</b></td>
-              <td>120</td>
-              <td><span class="cohort-badge bg-green">100%</span></td>
-              <td><span class="cohort-badge bg-cyan">68%</span></td>
-              <td><span class="cohort-badge bg-yellow">51%</span></td>
-              <td><span class="cohort-badge bg-orange">48%</span></td>
-            </tr>
-            <tr>
-              <td><b>Week 2 (Aug 8 - Aug 14)</b></td>
-              <td>140</td>
-              <td><span class="cohort-badge bg-green">100%</span></td>
-              <td><span class="cohort-badge bg-cyan">72%</span></td>
-              <td><span class="cohort-badge bg-yellow">41%</span></td>
-              <td><span class="cohort-badge bg-orange">55%</span></td>
-            </tr>
-          </tbody>
-        </table>
+      <!-- Surface Breakdown -->
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; margin-bottom:20px;">
+        <div class="card">
+          <h3 style="font-size:14px; font-weight:700; margin-bottom:12px;">📱 Surface Usage Breakdown (Gmail vs LinkedIn)</h3>
+          <div style="margin-bottom:12px;">
+            <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">
+              <span>Gmail</span> <span style="font-weight:700;">85%</span>
+            </div>
+            <div style="height:8px; background:#F1F5F9; border-radius:4px; overflow:hidden;">
+              <div style="width:85%; height:100%; background:#7C3AED;"></div>
+            </div>
+          </div>
+          <div>
+            <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">
+              <span>LinkedIn</span> <span style="font-weight:700;">15%</span>
+            </div>
+            <div style="height:8px; background:#F1F5F9; border-radius:4px; overflow:hidden;">
+              <div style="width:15%; height:100%; background:#2563EB;"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 style="font-size:14px; font-weight:700; margin-bottom:12px;">📊 User Intent Distribution</h3>
+          <div id="intentBars">
+            <div style="font-size:12px; color:#64748B;">Loading intent telemetry...</div>
+          </div>
+        </div>
       </div>
 
     </div>
 
     <!-- TAB 2: NUDGES & CAMPAIGNS -->
     <div id="tab-nudges" class="tab-content" style="display:none;">
-      
       <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <div>
@@ -383,22 +357,22 @@
         </div>
 
         <div style="margin-top:16px;">
-          <div style="font-size:11px; font-weight:700; color:#64748B; text-transform:uppercase; margin-bottom:8px;">AUTOMATED LIFECYCLE FUNNEL STAGES (COMPLIANCE SAFE)</div>
+          <div style="font-size:11px; font-weight:700; color:#64748B; text-transform:uppercase; margin-bottom:8px;">AUTOMATED LIFECYCLE FUNNEL STAGES</div>
           <div class="funnel-stages">
             <div class="stage-card">
-              <div class="stage-tag">STAGE 1: DAY 0-7 (0-3 REPL)</div>
+              <div class="stage-tag">STAGE 1: DAY 0-7</div>
               <div class="stage-name">Post-install Warmup</div>
               <div class="stage-desc">Triggers Gmail toast when user has 0-3 replies within 7 hours of extension install.</div>
             </div>
             <div class="stage-card">
-              <div class="stage-tag">STAGE 2: DAY 7-14 (INACTIVE 24H)</div>
+              <div class="stage-tag">STAGE 2: DAY 7-14</div>
               <div class="stage-name">Streak Saver Alarm</div>
               <div class="stage-desc">Fires push alarm when a 2+ day streak is in danger of resetting.</div>
             </div>
             <div class="stage-card">
               <div class="stage-tag">STAGE 3: DAY 14-30</div>
               <div class="stage-name">Pro-Quota Paywall</div>
-              <div class="stage-desc">Triggers popover with 1-click 3-day Pro trial when 5 free replies are reached.</div>
+              <div class="stage-desc">Triggers popover with 1-click 3-day Pro trial when free reply limit is reached.</div>
             </div>
             <div class="stage-card">
               <div class="stage-tag">STAGE 4: DAY 30+</div>
@@ -428,7 +402,6 @@
         </div>
 
       </div>
-
     </div>
 
     <!-- TAB 3: USERS -->
@@ -447,6 +420,73 @@
             </tr>
           </thead>
           <tbody id="usersTableBody">
+            <!-- Injected by JS -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- TAB 4: EVENT LOG -->
+    <div id="tab-events" class="tab-content" style="display:none;">
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <h3 style="font-size:16px; font-weight:700;">📡 Live Telemetry Event Stream</h3>
+          <button class="btn-refresh" onclick="loadEvents()">Refresh Stream</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>TIMESTAMP</th>
+              <th>USER EMAIL</th>
+              <th>EVENT NAME</th>
+              <th>SURFACE</th>
+              <th>METADATA</th>
+            </tr>
+          </thead>
+          <tbody id="eventsTableBody">
+            <!-- Injected by JS -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- TAB 5: INACTIVE USERS -->
+    <div id="tab-inactive" class="tab-content" style="display:none;">
+      <div class="card">
+        <h3 style="font-size:16px; font-weight:700; margin-bottom:12px;">⚠ Inactive User Re-engagement Target Queue</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>USER EMAIL</th>
+              <th>PLAN</th>
+              <th>LAST ACTIVE</th>
+              <th>DAYS INACTIVE</th>
+              <th>RE-ENGAGEMENT ACTION</th>
+            </tr>
+          </thead>
+          <tbody id="inactiveTableBody">
+            <!-- Injected by JS -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- TAB 6: TOP USERS -->
+    <div id="tab-top" class="tab-content" style="display:none;">
+      <div class="card">
+        <h3 style="font-size:16px; font-weight:700; margin-bottom:12px;">🏆 Top Power Users Ranking</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>RANK</th>
+              <th>USER EMAIL</th>
+              <th>PLAN</th>
+              <th>REPLIES GENERATED</th>
+              <th>STREAK DAYS</th>
+              <th>EST. TIME SAVED</th>
+            </tr>
+          </thead>
+          <tbody id="topUsersTableBody">
             <!-- Injected by JS -->
           </tbody>
         </table>
@@ -488,6 +528,13 @@
       
       const tabEl = document.getElementById('tab-' + tabName);
       if (tabEl) tabEl.style.display = 'block';
+
+      // Fetch tab data
+      if (tabName === 'events') loadEvents();
+      if (tabName === 'inactive') loadInactive();
+      if (tabName === 'top') loadTopUsers();
+      if (tabName === 'users') loadUsers();
+      if (tabName === 'nudges') loadNudges();
     }
 
     // Auth
@@ -499,7 +546,7 @@
       } else {
         localStorage.setItem('rm_admin_token', token);
         document.getElementById('authOverlay').style.display = 'none';
-        renderData(d);
+        renderAnalyticsData(d);
         loadNudges();
         loadUsers();
       }
@@ -508,19 +555,46 @@
     async function loadAllData() {
       showToast('Refreshing dashboard metrics...');
       const d = await api('/api/auth/admin/analytics');
-      if (!d.error) renderData(d);
+      if (!d.error) renderAnalyticsData(d);
       loadNudges();
       loadUsers();
     }
 
-    function renderData(d) {
+    function renderAnalyticsData(d) {
       if (d.stats) {
+        document.getElementById('statTotalUsers').textContent = (d.stats.total_users || 0).toLocaleString();
+        document.getElementById('statActiveTrials').textContent = (d.stats.pro_users || 0).toLocaleString();
         if (d.stats.total_users) {
-          document.getElementById('statNeverGen').textContent = Math.round(((d.stats.never_generated || 0) / d.stats.total_users) * 100) + '%';
+          const pct = Math.round(((d.stats.never_generated || 0) / d.stats.total_users) * 100);
+          document.getElementById('statNeverGen').textContent = pct + '%';
         }
       }
       if (d.tokenTotal) {
-        document.getElementById('statDraftsGen').textContent = (d.tokenTotal.total_replies || 4210).toLocaleString();
+        document.getElementById('statTotalReplies').textContent = (d.tokenTotal.total_replies || 0).toLocaleString();
+        document.getElementById('statDraftsGen').textContent = (d.tokenTotal.total_replies || 0).toLocaleString();
+      }
+      if (d.funnel) {
+        document.getElementById('fnSignups').textContent = d.funnel.signups || 0;
+        document.getElementById('fnVoiceReady').textContent = d.funnel.voice_ready || 0;
+        document.getElementById('fnRepliesGen').textContent = d.funnel.replies_generated || 0;
+        document.getElementById('fnActivated').textContent = d.funnel.activated || 0;
+      }
+      if (d.intents && d.intents.length > 0) {
+        const total = d.intents.reduce((acc, i) => acc + parseInt(i.count), 0);
+        document.getElementById('intentBars').innerHTML = d.intents.map(i => {
+          const pct = Math.round((parseInt(i.count) / (total || 1)) * 100);
+          return `
+            <div style="margin-bottom:8px;">
+              <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:2px;">
+                <span style="font-weight:600;">${i.intent || 'General Reply'}</span>
+                <span>${pct}% (${i.count})</span>
+              </div>
+              <div style="height:6px; background:#F1F5F9; border-radius:3px; overflow:hidden;">
+                <div style="width:${pct}%; height:100%; background:#2563EB;"></div>
+              </div>
+            </div>
+          `;
+        }).join('');
       }
     }
 
@@ -564,7 +638,10 @@
     async function loadUsers() {
       const d = await api('/api/auth/admin/users');
       const body = document.getElementById('usersTableBody');
-      if (!d.users || d.users.length === 0) return;
+      if (!d.users || d.users.length === 0) {
+        body.innerHTML = '<tr><td colspan="6" style="text-align:center; color:#94A3B8; padding:24px;">No users found in database.</td></tr>';
+        return;
+      }
       body.innerHTML = d.users.map(u => `
         <tr>
           <td>${u.id}</td>
@@ -573,6 +650,61 @@
           <td>${u.use_count || 0}</td>
           <td>🔥 ${u.streak_days || 0} days</td>
           <td>${new Date(u.created_at).toLocaleDateString()}</td>
+        </tr>
+      `).join('');
+    }
+
+    async function loadEvents() {
+      const d = await api('/api/auth/admin/events');
+      const body = document.getElementById('eventsTableBody');
+      if (!d.events || d.events.length === 0) {
+        body.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#94A3B8; padding:24px;">No events recorded in telemetry stream yet.</td></tr>';
+        return;
+      }
+      body.innerHTML = d.events.slice(0, 50).map(e => `
+        <tr>
+          <td><span style="font-family:monospace; font-size:11px; color:#64748B;">${new Date(e.created_at).toLocaleString()}</span></td>
+          <td><b>${e.email || e.user_id}</b></td>
+          <td><span class="pill pill-purple">${e.event_name}</span></td>
+          <td>${e.surface || 'extension'}</td>
+          <td><div style="font-family:monospace; font-size:11px; color:#475569; max-width:300px; overflow:hidden; text-overflow:ellipsis;">${JSON.stringify(e.metadata || {})}</div></td>
+        </tr>
+      `).join('');
+    }
+
+    async function loadInactive() {
+      const d = await api('/api/auth/admin/inactive');
+      const body = document.getElementById('inactiveTableBody');
+      if (!d.inactiveUsers || d.inactiveUsers.length === 0) {
+        body.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#047857; font-weight:600; padding:24px;">🎉 All users are currently active! No inactive users detected.</td></tr>';
+        return;
+      }
+      body.innerHTML = d.inactiveUsers.map(u => `
+        <tr>
+          <td><b>${u.email}</b></td>
+          <td><span class="pill pill-blue">${(u.plan || 'free').toUpperCase()}</span></td>
+          <td>${u.last_active_at ? new Date(u.last_active_at).toLocaleDateString() : 'Never'}</td>
+          <td><span style="color:#C2410C; font-weight:700;">${u.days_inactive || 3}+ days</span></td>
+          <td><button class="btn-dispatch" onclick="triggerPredictions()">Dispatch Nudge</button></td>
+        </tr>
+      `).join('');
+    }
+
+    async function loadTopUsers() {
+      const d = await api('/api/auth/admin/top-users');
+      const body = document.getElementById('topUsersTableBody');
+      if (!d.topUsers || d.topUsers.length === 0) {
+        body.innerHTML = '<tr><td colspan="6" style="text-align:center; color:#94A3B8; padding:24px;">No user activity recorded yet.</td></tr>';
+        return;
+      }
+      body.innerHTML = d.topUsers.map((u, idx) => `
+        <tr>
+          <td><b style="font-size:14px; color:#2563EB;">#${idx + 1}</b></td>
+          <td><b>${u.email}</b></td>
+          <td><span class="pill pill-green">${(u.plan || 'free').toUpperCase()}</span></td>
+          <td><b style="font-size:14px;">${u.use_count || 0}</b> replies</td>
+          <td>🔥 ${u.streak_days || 0} days</td>
+          <td><span style="color:#047857; font-weight:700;">${Math.round((u.use_count || 0) * 3)} minutes saved</span></td>
         </tr>
       `).join('');
     }
@@ -603,7 +735,7 @@
       api('/api/auth/admin/analytics').then(d => {
         if (!d.error) {
           document.getElementById('authOverlay').style.display = 'none';
-          renderData(d);
+          renderAnalyticsData(d);
           loadNudges();
           loadUsers();
         }
