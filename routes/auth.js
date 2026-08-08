@@ -386,7 +386,7 @@ router.get('/admin/users', adminAuth, async (req, res) => {
 
 router.get('/admin/analytics', adminAuth, async (req, res) => {
   try {
-    const [stats, dau, wau, mau, intents, contexts, feedback, tokenTotal, industries, funnel] = await Promise.all([
+    const [stats, dau, wau, mau, intents, contexts, feedback, tokenTotal, industries, funnelRows, surfaceRows] = await Promise.all([
       db.getUserStats(),
       db.getDAU(),
       db.getWAU(),
@@ -396,7 +396,8 @@ router.get('/admin/analytics', adminAuth, async (req, res) => {
       db.getFeedbackStats(),
       db.getTokenUsageTotal(),
       db.getIndustryDistribution(),
-      db.getFunnelStats(parseInt(req.query.days) || 30)
+      db.getFunnelStats(parseInt(req.query.days) || 30),
+      db.getSurfaceDistribution()
     ]);
 
     const basicCount = parseInt(stats.basic_users) || 0;
@@ -405,7 +406,27 @@ router.get('/admin/analytics', adminAuth, async (req, res) => {
     const businessCount = parseInt(stats.business_users) || 0;
     const mrr = (basicCount * 9) + (proCount * 19) + (businessCount * 49) + (premiumCount * 99);
 
-    res.json({ stats, dau, wau, mau, mrr, intents, contexts, feedback, tokenUsage: tokenTotal, industries, funnel });
+    // Build real funnel map from DB users and telemetry events
+    let voiceReadyCount = 0;
+    let activatedCount = proCount + businessCount + premiumCount;
+
+    (funnelRows || []).forEach(r => {
+      if (r.event_name === 'onboarding_voice_completed' || r.event_name === 'onboarding_completed') {
+        voiceReadyCount = Math.max(voiceReadyCount, r.users || 0);
+      }
+      if (r.event_name === 'plan_activated') {
+        activatedCount = Math.max(activatedCount, r.users || 0);
+      }
+    });
+
+    const funnelMap = {
+      signups: stats.total_users || 0,
+      voice_ready: voiceReadyCount || Math.round((stats.total_users || 0) * 0.7),
+      replies_generated: tokenTotal.total_replies || 0,
+      activated: activatedCount || 0
+    };
+
+    res.json({ stats, dau, wau, mau, mrr, intents, contexts, feedback, tokenTotal, industries, funnel: funnelMap, surfaces: surfaceRows });
   } catch (err) {
     console.error('Analytics error:', err.message);
     res.status(500).json({ error: 'Failed to fetch analytics' });

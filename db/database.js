@@ -440,6 +440,15 @@ const db = {
     return rows;
   },
 
+  async getSurfaceDistribution() {
+    const { rows } = await pool.query(
+      `SELECT COALESCE(surface, 'gmail') AS surface, COUNT(*)::int AS count
+       FROM events
+       GROUP BY COALESCE(surface, 'gmail')`
+    );
+    return rows;
+  },
+
   // ─── Entitlements: one account, a plan per product ────────────────────────
   async getEntitlement(userId, product) {
     const { rows } = await pool.query(
