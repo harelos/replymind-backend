@@ -7,19 +7,21 @@ const path = require('path');
 const Sentry = require("@sentry/node");
 const { nodeProfilingIntegration } = require("@sentry/profiling-node");
 
+// Optional Sentry Error Tracking (v8+ API compatible)
+if (process.env.SENTRY_DSN) {
+  try {
+    Sentry.init({
+      dsn: process.env.SENTRY_DSN,
+      integrations: [nodeProfilingIntegration()],
+      tracesSampleRate: 1.0,
+      profilesSampleRate: 1.0,
+    });
+  } catch (e) {
+    console.warn('Sentry init skipped:', e.message);
+  }
+}
+
 const app = express();
-
-Sentry.init({
-  dsn: process.env.SENTRY_DSN,
-  integrations: [
-    nodeProfilingIntegration(),
-  ],
-  tracesSampleRate: 1.0,
-  profilesSampleRate: 1.0,
-});
-
-app.use(Sentry.Handlers.requestHandler());
-app.use(Sentry.Handlers.tracingHandler());
 
 // Allow all origins in development — tighten this when deploying to Railway
 app.use(cors());
@@ -54,7 +56,10 @@ app.get('/health', (req, res) => {
 // 404
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 
-app.use(Sentry.Handlers.errorHandler());
+// Sentry v8+ Error Handler
+if (process.env.SENTRY_DSN && typeof Sentry.setupExpressErrorHandler === 'function') {
+  Sentry.setupExpressErrorHandler(app);
+}
 
 // Global error handler
 app.use((err, req, res, next) => {
