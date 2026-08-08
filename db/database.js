@@ -121,14 +121,15 @@ async function initDB() {
       ALTER TABLE pending_upgrades
         ADD COLUMN IF NOT EXISTS product VARCHAR(32) NOT NULL DEFAULT 'replymind';
     `);
-    // Clean up any duplicates before adding the constraint (if it didn't exist)
+    // Clean up any undelivered duplicates so each user has at most 1 active nudge
     await client.query(`
       DELETE FROM nudges
       WHERE id IN (
         SELECT id
         FROM (
-          SELECT id, ROW_NUMBER() OVER (PARTITION BY user_id, segment ORDER BY created_at DESC) AS rnum
+          SELECT id, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_at DESC) AS rnum
           FROM nudges
+          WHERE delivered_at IS NULL
         ) t
         WHERE t.rnum > 1
       );
@@ -623,12 +624,14 @@ const db = {
   // ─── Predictive Nudges & Campaign Engine ─────────────────────────────────────
   async getNudgesForAdmin() {
     const { rows } = await pool.query(
-      `SELECT n.*, u.email as user_email
+      `SELECT DISTINCT ON (n.user_id) n.*, u.email as user_email
        FROM nudges n
        JOIN users u ON n.user_id = u.id
        WHERE n.delivered_at IS NULL
-       ORDER BY n.risk_score DESC, n.created_at DESC`
+       ORDER BY n.user_id, n.created_at DESC`
     );
+    // Sort by risk score descending for display
+    rows.sort((a, b) => b.risk_score - a.risk_score);
     return rows;
   },
 
