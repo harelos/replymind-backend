@@ -348,6 +348,22 @@ router.post('/admin/nudges/dispatch', adminAuth, async (req, res) => {
   }
 });
 
+router.post('/admin/nudges/manual', adminAuth, async (req, res) => {
+  const { email, message, url } = req.body;
+  if (!email || !message) return res.status(400).json({ error: 'email and message required' });
+  try {
+    const user = await db.getUserByEmail(email);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    
+    // Create and dispatch the manual nudge immediately
+    const nudge = await db.createManualNudge(user.id, message, url);
+    res.json({ success: true, nudge });
+  } catch (err) {
+    console.error('Manual nudge error:', err.message);
+    res.status(500).json({ error: 'Failed to dispatch manual nudge' });
+  }
+});
+
 router.post('/admin/nudges/auto-approve', adminAuth, async (req, res) => {
   try {
     const result = await db.autoApproveHighConfidence();

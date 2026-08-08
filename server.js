@@ -4,8 +4,22 @@ const cors = require('cors');
 const { initDB } = require('./db/database');
 
 const path = require('path');
+const Sentry = require("@sentry/node");
+const { nodeProfilingIntegration } = require("@sentry/profiling-node");
 
 const app = express();
+
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  integrations: [
+    nodeProfilingIntegration(),
+  ],
+  tracesSampleRate: 1.0,
+  profilesSampleRate: 1.0,
+});
+
+app.use(Sentry.Handlers.requestHandler());
+app.use(Sentry.Handlers.tracingHandler());
 
 // Allow all origins in development — tighten this when deploying to Railway
 app.use(cors());
@@ -33,6 +47,8 @@ app.get('/health', (req, res) => {
 
 // 404
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
+
+app.use(Sentry.Handlers.errorHandler());
 
 // Global error handler
 app.use((err, req, res, next) => {

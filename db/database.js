@@ -667,6 +667,22 @@ const db = {
     return rows[0] || null;
   },
 
+  async getChurnRiskData(userId) {
+    const user = await db.getUserById(userId);
+    let tonesCount = 0;
+    if (user && user.tone_profile && user.tone_profile.trim().length > 0) {
+      tonesCount = 1;
+    }
+    
+    const { rows } = await pool.query(
+      `SELECT COUNT(*) as count FROM events WHERE user_id = $1 AND event_name = 'contact_remembered'`,
+      [userId]
+    );
+    const memoriesCount = parseInt(rows[0]?.count) || 0;
+    
+    return `You have ${memoriesCount} contact memories and ${tonesCount} Custom Tones saved. Downgrading means these will be permanently deleted.`;
+  },
+
   async markNudgeDelivered(nudgeId) {
     await pool.query(
       `UPDATE nudges SET delivered_at = NOW() WHERE id = $1`,
@@ -701,7 +717,9 @@ const db = {
         riskScore = Math.min(98, Math.floor(50 + hoursSinceCreated * 1.5));
         campaignName = 'Activation Nudge: First AI Reply';
         triggerChannel = 'gmail_toast';
-        aiMessage = `Hi there! Your personal AI Voice profile is loaded. Insert your first 1-click reply in Gmail to save 15 minutes today!`;
+        aiMessage = u.onboarding_goal 
+          ? `You wanted to ${u.onboarding_goal}. Don't give up now!`
+          : `Hi there! Your personal AI Voice profile is loaded. Insert your first 1-click reply in Gmail to save 15 minutes today!`;
         ctaLabel = 'Write First Reply';
         ctaAction = 'trigger_gmail_toast';
         confidenceScore = 94;
@@ -731,7 +749,9 @@ const db = {
         riskScore = 91;
         campaignName = 'Re-engagement Flash Offer';
         triggerChannel = 'extension_popover';
-        aiMessage = `🔥 We miss you! Claim your 48-hour 50% discount: Pro Plan for $9.50/mo (coupon REPLY50).`;
+        aiMessage = u.onboarding_goal
+          ? `You wanted to ${u.onboarding_goal}. Don't give up now!`
+          : `🔥 We miss you! Claim your 48-hour 50% discount: Pro Plan for $9.50/mo (coupon REPLY50).`;
         ctaLabel = 'Claim 50% Off Pro';
         ctaAction = 'https://replymind.xyz/checkout?coupon=REPLY50';
         confidenceScore = 89;
