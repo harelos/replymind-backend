@@ -69,7 +69,9 @@ router.post('/', validateToken, async (req, res) => {
   if (!intent || !INTENT_PROMPTS.hasOwnProperty(intent))
     return res.status(400).json({ error: 'Valid intent is required', code: 'NO_INTENT' });
 
-  const user = req.user;
+  let user = req.user;
+  user = await db.checkAndDowngradeTrial(user);
+  const trialStatus = db.getTrialStatus(user);
   const plan = user.plan || 'free';
   const limits = PLAN_LIMITS[plan];
 
@@ -181,6 +183,7 @@ Return ONLY a raw JSON object — no markdown, no backticks, no explanation:
       totalReplies: updatedUser?.total_replies || 0,
       timeSaved: Math.round(timeSaved),
       intentLabel: INTENT_LABELS[intent],
+      ...trialStatus,
       planLimits: limits
     });
 

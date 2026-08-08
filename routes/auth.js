@@ -22,7 +22,9 @@ const CLIENT_EVENTS = new Set([
   'onboarding_voice_completed', 'onboarding_completed', 'account_registered',
   'login_succeeded', 'reply_generated', 'reply_inserted', 'contact_remembered',
   'contact_note_saved', 'contact_forgotten', 'first_success_shown',
-  'memory_limit_shown', 'checkout_clicked', 'generation_error'
+  'memory_limit_shown', 'checkout_clicked', 'generation_error',
+  'trial_started', 'trial_expired', 'recommendation_clicked',
+  'limit_reached_free', 'limit_reached_monthly', 'intent_locked_shown'
 ]);
 const CLIENT_EVENT_METADATA = new Set([
   'surface', 'plan', 'intent', 'outcome', 'errorType',
@@ -67,15 +69,17 @@ router.post('/register', async (req, res) => {
 
     const password_hash = await bcrypt.hash(password, 12);
     const activation_code = crypto.randomBytes(16).toString('hex');
-    const user = await db.createUser({ email: email.toLowerCase(), password_hash, activation_code });
+    let user = await db.createUser({ email: email.toLowerCase(), password_hash, activation_code });
 
     // Save industry if provided
     if (industry) {
-      await db.updateUser(user.id, { industry: industry.slice(0, 100) });
+      user = await db.updateUser(user.id, { industry: industry.slice(0, 100) });
     }
 
     // If they paid before creating the account, upgrade them now.
-    await applyPendingUpgrade(user);
+    user = await applyPendingUpgrade(user);
+    user = await db.checkAndDowngradeTrial(user);
+    const trialStatus = db.getTrialStatus(user);
 
     const token = jwt.sign({ userId: user.id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '30d' });
     await db.logEvent(user.id, 'account_created', { industry: industry || '' });
@@ -85,6 +89,7 @@ router.post('/register', async (req, res) => {
       user: {
         id: user.id, email: user.email, plan: user.plan,
         toneProfile: '', industry: industry || '',
+        ...trialStatus,
         planLimits: PLAN_LIMITS[user.plan]
       }
     });
@@ -101,14 +106,16 @@ router.post('/login', async (req, res) => {
     return res.status(400).json({ error: 'Email and password required' });
 
   try {
-    const user = await db.getUserByEmail(email.toLowerCase());
+    let user = await db.getUserByEmail(email.toLowerCase());
     if (!user) return res.status(401).json({ error: 'Invalid email or password' });
 
     const match = await bcrypt.compare(password, user.password_hash);
     if (!match) return res.status(401).json({ error: 'Invalid email or password' });
 
     // Pick up any Paddle payment made against this email while logged out.
-    await applyPendingUpgrade(user);
+    user = await applyPendingUpgrade(user);
+    user = await db.checkAndDowngradeTrial(user);
+    const trialStatus = db.getTrialStatus(user);
 
     const token = jwt.sign({ userId: user.id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '30d' });
 
@@ -118,6 +125,7 @@ router.post('/login', async (req, res) => {
         id: user.id, email: user.email, plan: user.plan,
         toneProfile: user.tone_profile || '', industry: user.industry || '',
         streakDays: user.streak_days || 0, totalReplies: user.total_replies || 0,
+        ...trialStatus,
         planLimits: PLAN_LIMITS[user.plan]
       }
     });
@@ -260,7 +268,9 @@ router.post('/feedback', validateToken, async (req, res) => {
 // GET /api/auth/me — get current user info
 router.get('/me', validateToken, async (req, res) => {
   try {
-    const user = req.user;
+    let user = req.user;
+    user = await db.checkAndDowngradeTrial(user);
+    const trialStatus = db.getTrialStatus(user);
     const replyChoiceCount = await db.getReplyChoiceCount(user.id);
     const totalReplies = user.total_replies || 0;
     res.json({
@@ -273,12 +283,25 @@ router.get('/me', validateToken, async (req, res) => {
         useCount: user.use_count || 0,
         monthlyUseCount: user.monthly_use_count || 0,
         replyChoiceCount,
+        ...trialStatus,
         planLimits: PLAN_LIMITS[user.plan]
       }
     });
   } catch (err) {
     console.error('Session refresh error:', err.message);
     res.status(500).json({ error: 'Could not refresh account' });
+  }
+});
+
+// GET /api/nudges/active — Extension polls for active approved nudge for this user
+router.get('/nudges/active', validateToken, async (req, res) => {
+  try {
+    const nudge = await db.getActiveNudgeForUser(req.userId);
+    if (!nudge) return res.json({ nudge: null });
+    await db.markNudgeDelivered(nudge.id);
+    res.json({ nudge });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch nudge' });
   }
 });
 
@@ -290,6 +313,49 @@ function adminAuth(req, res, next) {
     return res.status(403).json({ error: 'Forbidden' });
   next();
 }
+
+// Admin Predictive Nudge Routes
+router.get('/admin/nudges/predict', adminAuth, async (req, res) => {
+  try {
+    await db.calculateAndStorePredictions();
+    const nudges = await db.getNudgesForAdmin();
+    res.json({ success: true, predictions: nudges });
+  } catch (err) {
+    console.error('Predict nudges error:', err.message);
+    res.status(500).json({ error: 'Failed to generate nudge predictions' });
+  }
+});
+
+router.post('/admin/nudges/approve', adminAuth, async (req, res) => {
+  const { nudgeId } = req.body;
+  if (!nudgeId) return res.status(400).json({ error: 'nudgeId required' });
+  try {
+    const nudge = await db.approveNudge(nudgeId);
+    res.json({ success: true, nudge });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to approve nudge' });
+  }
+});
+
+router.post('/admin/nudges/dispatch', adminAuth, async (req, res) => {
+  const { nudgeId } = req.body;
+  if (!nudgeId) return res.status(400).json({ error: 'nudgeId required' });
+  try {
+    const nudge = await db.dispatchNudge(nudgeId);
+    res.json({ success: true, nudge });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to dispatch nudge' });
+  }
+});
+
+router.post('/admin/nudges/auto-approve', adminAuth, async (req, res) => {
+  try {
+    const result = await db.autoApproveHighConfidence();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to auto approve nudges' });
+  }
+});
 
 router.get('/admin/users', adminAuth, async (req, res) => {
   try {

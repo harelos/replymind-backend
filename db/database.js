@@ -31,6 +31,8 @@ async function initDB() {
         streak_days INTEGER DEFAULT 0,
         last_active_date DATE,
         total_replies INTEGER DEFAULT 0,
+        trial_started_at TIMESTAMPTZ,
+        trial_ends_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         activated_at TIMESTAMPTZ,
         activation_code VARCHAR(64)
@@ -42,6 +44,25 @@ async function initDB() {
         event_name VARCHAR(100) NOT NULL,
         metadata JSONB DEFAULT '{}',
         created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS nudges (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        segment VARCHAR(50) NOT NULL,
+        risk_score INTEGER DEFAULT 0,
+        status_label VARCHAR(100) NOT NULL,
+        campaign_name VARCHAR(150) NOT NULL,
+        trigger_channel VARCHAR(50) DEFAULT 'gmail_toast',
+        ai_message TEXT NOT NULL,
+        cta_label VARCHAR(100) DEFAULT 'Open ReplyMind',
+        cta_action VARCHAR(100) DEFAULT 'open_replymind',
+        confidence_score INTEGER DEFAULT 0,
+        approved_by_admin BOOLEAN DEFAULT FALSE,
+        dispatched_at TIMESTAMPTZ,
+        delivered_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
       );
 
       CREATE TABLE IF NOT EXISTS reply_choices (
@@ -499,6 +520,195 @@ const db = {
        ORDER BY count DESC`
     );
     return rows;
+  },
+
+  // ─── Trial infrastructure ──────────────────────────────────────────────────
+  getTrialStatus(user) {
+    if (!user) return { isTrialActive: false, trialDaysLeft: 0, trialEndsAt: null, trialStartedAt: null };
+    const trialEndsAt = user.trial_ends_at ? new Date(user.trial_ends_at) : null;
+    const trialStartedAt = user.trial_started_at ? new Date(user.trial_started_at) : null;
+    const now = new Date();
+
+    if (!trialEndsAt) {
+      return { isTrialActive: false, trialDaysLeft: 0, trialEndsAt: null, trialStartedAt: user.trial_started_at || null };
+    }
+
+    const diffMs = trialEndsAt.getTime() - now.getTime();
+    const trialDaysLeft = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+    const isTrialActive = user.plan === 'pro' && diffMs > 0;
+
+    return {
+      isTrialActive,
+      trialDaysLeft,
+      trialEndsAt: user.trial_ends_at,
+      trialStartedAt: user.trial_started_at
+    };
+  },
+
+  async checkAndDowngradeTrial(user) {
+    if (!user || user.plan !== 'pro' || !user.trial_ends_at) return user;
+    const now = new Date();
+    const endsAt = new Date(user.trial_ends_at);
+    if (endsAt <= now) {
+      // Lazy expiry: trial ended and user has no active paid subscription
+      const { rows } = await pool.query(
+        `UPDATE users SET plan = 'free' WHERE id = $1 RETURNING *`,
+        [user.id]
+      );
+      if (rows[0]) {
+        await db.logEvent(user.id, 'trial_expired_downgraded', { plan: 'free' });
+        return rows[0];
+      }
+    }
+    return user;
+  },
+
+  async startTrial(userId, durationDays = 7) {
+    const user = await db.getUserById(userId);
+    if (!user) return null;
+    // Write-once: set trial_started_at ONLY if it is currently NULL to prevent trial abuse
+    const now = new Date();
+    const endsAt = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+
+    const { rows } = await pool.query(
+      `UPDATE users 
+       SET plan = 'pro',
+           trial_started_at = COALESCE(trial_started_at, NOW()),
+           trial_ends_at = $1
+       WHERE id = $2 RETURNING *`,
+      [endsAt.toISOString(), userId]
+    );
+    if (rows[0]) {
+      await db.logEvent(userId, 'trial_started', { durationDays });
+    }
+    return rows[0] || null;
+  },
+
+  // ─── Predictive Nudges & Campaign Engine ─────────────────────────────────────
+  async getNudgesForAdmin() {
+    const { rows } = await pool.query(
+      `SELECT n.*, u.email as user_email
+       FROM nudges n
+       JOIN users u ON n.user_id = u.id
+       ORDER BY n.risk_score DESC, n.created_at DESC`
+    );
+    return rows;
+  },
+
+  async approveNudge(nudgeId) {
+    const { rows } = await pool.query(
+      `UPDATE nudges SET approved_by_admin = TRUE, updated_at = NOW() WHERE id = $1 RETURNING *`,
+      [nudgeId]
+    );
+    return rows[0] || null;
+  },
+
+  async dispatchNudge(nudgeId) {
+    const { rows } = await pool.query(
+      `UPDATE nudges SET approved_by_admin = TRUE, dispatched_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *`,
+      [nudgeId]
+    );
+    return rows[0] || null;
+  },
+
+  async autoApproveHighConfidence() {
+    const { rows } = await pool.query(
+      `UPDATE nudges SET approved_by_admin = TRUE, updated_at = NOW()
+       WHERE confidence_score >= 85 AND approved_by_admin = FALSE
+       RETURNING id`
+    );
+    return { approvedCount: rows.length };
+  },
+
+  async getActiveNudgeForUser(userId) {
+    const { rows } = await pool.query(
+      `SELECT * FROM nudges
+       WHERE user_id = $1 AND approved_by_admin = TRUE AND delivered_at IS NULL
+       ORDER BY risk_score DESC LIMIT 1`,
+      [userId]
+    );
+    return rows[0] || null;
+  },
+
+  async markNudgeDelivered(nudgeId) {
+    await pool.query(
+      `UPDATE nudges SET delivered_at = NOW() WHERE id = $1`,
+      [nudgeId]
+    );
+  },
+
+  async calculateAndStorePredictions() {
+    const { rows: users } = await pool.query(`SELECT * FROM users`);
+    const now = new Date();
+
+    for (const u of users) {
+      const createdTime = new Date(u.created_at).getTime();
+      const hoursSinceCreated = Math.max(1, Math.floor((now.getTime() - createdTime) / 3600000));
+      const lastActiveTime = u.last_active_date ? new Date(u.last_active_date).getTime() : createdTime;
+      const hoursInactive = Math.max(0, Math.floor((now.getTime() - lastActiveTime) / 3600000));
+      const totalReplies = u.total_replies || 0;
+
+      let riskScore = 0;
+      let segment = 'HEALTHY_ADVOCATE';
+      let statusLabel = 'Healthy Engaged';
+      let campaignName = 'Regular Active Retain';
+      let triggerChannel = 'gmail_toast';
+      let aiMessage = `Keep it up! ReplyMind is matching your voice seamlessly in Gmail.`;
+      let ctaLabel = 'Open Gmail';
+      let ctaAction = 'open_gmail';
+      let confidenceScore = 75;
+
+      if (totalReplies === 0 && hoursSinceCreated >= 12) {
+        segment = 'STALLED_ACTIVATION';
+        statusLabel = 'Stalled Activation (0 Replies)';
+        riskScore = Math.min(98, Math.floor(50 + hoursSinceCreated * 1.5));
+        campaignName = 'Activation Nudge: First AI Reply';
+        triggerChannel = 'gmail_toast';
+        aiMessage = `Hi there! Your personal AI Voice profile is loaded. Insert your first 1-click reply in Gmail to save 15 minutes today!`;
+        ctaLabel = 'Write First Reply';
+        ctaAction = 'trigger_gmail_toast';
+        confidenceScore = 94;
+      } else if (u.plan === 'free' && totalReplies >= 5) {
+        segment = 'CONVERSION_CANDIDATE';
+        statusLabel = 'Free Quota Reached (Pro Candidate)';
+        riskScore = 85;
+        campaignName = 'Pro Trial Flash Offer ($19/mo)';
+        triggerChannel = 'extension_popover';
+        aiMessage = `🔥 You've used all 5 free replies today! Start your 7-day Pro trial to unlock unlimited AI replies.`;
+        ctaLabel = 'Start 7-Day Pro Trial';
+        ctaAction = 'navigate_checkout';
+        confidenceScore = 93;
+      } else if ((u.streak_days || 0) >= 2 && hoursInactive >= 24) {
+        segment = 'STREAK_SAVER';
+        statusLabel = 'Streak at Risk (Inactive 24h)';
+        riskScore = 78;
+        campaignName = 'Streak Saver Nudge';
+        triggerChannel = 'push_alarm';
+        aiMessage = `⚡ Don't lose your ${u.streak_days}-day streak! Send 1 quick reply today to keep it going.`;
+        ctaLabel = 'Save My Streak';
+        ctaAction = 'open_gmail';
+        confidenceScore = 88;
+      } else if (hoursInactive >= 72) {
+        segment = 'HIGH_RISK_CHURN';
+        statusLabel = 'High Churn Risk (Inactive > 3 Days)';
+        riskScore = 91;
+        campaignName = 'Re-engagement Flash Offer';
+        triggerChannel = 'extension_popover';
+        aiMessage = `We miss you! Start your 7-day Pro trial to unlock unlimited ReplyMind AI replies in Gmail & LinkedIn.`;
+        ctaLabel = 'Start 7-Day Free Trial';
+        ctaAction = 'navigate_checkout';
+        confidenceScore = 89;
+      }
+
+      if (segment !== 'HEALTHY_ADVOCATE') {
+        await pool.query(
+          `INSERT INTO nudges (user_id, segment, risk_score, status_label, campaign_name, trigger_channel, ai_message, cta_label, cta_action, confidence_score, approved_by_admin)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           ON CONFLICT DO NOTHING`,
+          [u.id, segment, riskScore, statusLabel, campaignName, triggerChannel, aiMessage, ctaLabel, ctaAction, confidenceScore, confidenceScore >= 90]
+        );
+      }
+    }
   }
 };
 

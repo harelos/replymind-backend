@@ -100,9 +100,14 @@ async function fulfill(email, product, plan, meta) {
   }
   const user = await db.getUserByEmail(email);
   if (user) {
-    await db.setEntitlement(user.id, product, plan);
-    if (product === 'replymind') {
-      await db.updateUser(user.id, { activated_at: new Date().toISOString() });
+    if (meta.isTrial || meta.event === 'subscription.trialing') {
+      await db.startTrial(user.id, 7);
+    } else {
+      await db.setEntitlement(user.id, product, plan);
+      if (product === 'replymind') {
+        // Active full paid subscription: clear trial_ends_at, keep trial_started_at
+        await db.updateUser(user.id, { activated_at: new Date().toISOString(), trial_ends_at: null });
+      }
     }
     await db.logEvent(user.id, 'plan_activated', { method: 'paddle', product, plan, ...meta });
     console.log('paddle_plan_activated', JSON.stringify({ email, product, plan }));
@@ -117,9 +122,13 @@ async function downgrade(email, product, meta) {
   if (!email) return;
   const user = await db.getUserByEmail(email);
   if (user) {
-    await db.setEntitlement(user.id, product || 'replymind', 'free');
-    await db.logEvent(user.id, 'plan_downgraded', { method: 'paddle', product, ...meta });
-    console.log('paddle_plan_downgraded', JSON.stringify({ email, product }));
+    // If trial is still active, don't downgrade until trial_ends_at naturally passes
+    const trialStatus = db.getTrialStatus(user);
+    if (!trialStatus.isTrialActive) {
+      await db.setEntitlement(user.id, product || 'replymind', 'free');
+      await db.logEvent(user.id, 'plan_downgraded', { method: 'paddle', product, ...meta });
+      console.log('paddle_plan_downgraded', JSON.stringify({ email, product }));
+    }
   }
   await db.deletePendingUpgrade(email);
 }

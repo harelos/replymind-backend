@@ -230,6 +230,7 @@
 
   <div class="tabs">
     <div class="tab active" data-tab="overview">Overview</div>
+    <div class="tab" data-tab="nudges">⚡ Nudges & Campaigns</div>
     <div class="tab" data-tab="users">Users</div>
     <div class="tab" data-tab="events">Event Log</div>
     <div class="tab" data-tab="inactive">Inactive</div>
@@ -314,6 +315,41 @@
       <div class="table-box">
         <h3>Recent Events</h3>
         <div id="eventsContainer" style="max-height:600px;overflow-y:auto"></div>
+      </div>
+    </div>
+
+    <!-- ── NUDGES & CAMPAIGNS TAB ───────────────────── -->
+    <div class="tab-panel" id="panel-nudges">
+      <div class="table-box">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+          <div>
+            <h3>Predictive Nudge & Campaign Management</h3>
+            <p style="color:#6b7280; font-size:12px; margin-top:4px;">Behavioral risk formulas segment users and propose AI nudges. Approve or auto-pilot campaign dispatches.</p>
+          </div>
+          <div style="display:flex; gap:10px;">
+            <button onclick="autoApproveNudges()" style="background:#10B981; color:#fff; border:none; padding:8px 14px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer;">⚡ Auto-Pilot (>=85% Conf)</button>
+            <button onclick="loadNudges()" style="background:#4F8EF7; color:#fff; border:none; padding:8px 14px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer;">↻ Run Predictions</button>
+          </div>
+        </div>
+        <div style="overflow-x:auto">
+          <table>
+            <thead>
+              <tr>
+                <th>User Email</th>
+                <th>Segment</th>
+                <th>Risk Score</th>
+                <th>Proposed AI Nudge Message</th>
+                <th>Channel</th>
+                <th>Confidence</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="nudgesBody">
+              <tr><td colspan="8" style="text-align:center; color:#6b7280; padding:24px;">Click "Run Predictions" to generate campaign recommendations.</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -409,12 +445,13 @@ document.querySelectorAll('.tab').forEach(tab => {
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     tab.classList.add('active');
     document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+    if (tab.dataset.tab === 'nudges') loadNudges();
   });
 });
 
 // ─── Load Everything ───────────────────────────────────────────────────────────
 async function loadAll() {
-  await Promise.all([loadAnalytics(), loadCharts(), loadUsers(), loadEvents(), loadInactive(), loadTopUsers()]);
+  await Promise.all([loadAnalytics(), loadCharts(), loadUsers(), loadEvents(), loadInactive(), loadTopUsers(), loadNudges()]);
 }
 
 async function refreshAll() {
@@ -480,6 +517,65 @@ async function loadCharts() {
 }
 
 // ─── Users ─────────────────────────────────────────────────────────────────────
+async function loadNudges() {
+  const d = await api('/api/auth/admin/nudges/predict');
+  if (d.error) return showToast(d.error, true);
+  renderNudges(d.predictions || []);
+  showToast('Predictive nudge analysis updated!');
+}
+
+function renderNudges(nudges) {
+  const body = document.getElementById('nudgesBody');
+  if (!nudges.length) {
+    body.innerHTML = '<tr><td colspan="8" style="text-align:center; color:#6b7280; padding:24px;">No nudge campaign recommendations currently pending.</td></tr>';
+    return;
+  }
+  body.innerHTML = nudges.map(n => `
+    <tr>
+      <td><strong>${esc(n.user_email || n.user_id)}</strong></td>
+      <td><span class="badge" style="background:#1e2130; color:#4F8EF7;">${esc(n.segment)}</span></td>
+      <td><strong style="color:${n.risk_score > 80 ? '#EF4444' : '#F59E0B'};">${n.risk_score}/100</strong></td>
+      <td style="max-width:280px; font-size:12px;">${esc(n.ai_message)}</td>
+      <td><code>${esc(n.trigger_channel)}</code></td>
+      <td><strong style="color:#10B981;">${n.confidence_score}%</strong></td>
+      <td>${n.approved_by_admin ? '<span class="badge badge-basic">APPROVED</span>' : '<span class="badge badge-free">PENDING</span>'}</td>
+      <td>
+        ${!n.approved_by_admin ? `<button onclick="approveNudge(${n.id})" style="background:#4F8EF7; color:#fff; border:none; padding:4px 8px; border-radius:4px; font-size:11px; cursor:pointer; margin-right:4px;">Approve</button>` : ''}
+        <button onclick="dispatchNudge(${n.id})" style="background:#10B981; color:#fff; border:none; padding:4px 8px; border-radius:4px; font-size:11px; cursor:pointer;">Dispatch</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function approveNudge(nudgeId) {
+  const d = await api('/api/auth/admin/nudges/approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nudgeId })
+  });
+  if (d.error) return showToast(d.error, true);
+  showToast('Nudge approved!');
+  loadNudges();
+}
+
+async function dispatchNudge(nudgeId) {
+  const d = await api('/api/auth/admin/nudges/dispatch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nudgeId })
+  });
+  if (d.error) return showToast(d.error, true);
+  showToast('Nudge dispatched!');
+  loadNudges();
+}
+
+async function autoApproveNudges() {
+  const d = await api('/api/auth/admin/nudges/auto-approve', { method: 'POST' });
+  if (d.error) return showToast(d.error, true);
+  showToast(`Auto-pilot approved ${d.approvedCount} campaigns!`);
+  loadNudges();
+}
+
 async function loadUsers() {
   const d = await api('/api/auth/admin/users');
   if (d.error) return;
